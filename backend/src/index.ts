@@ -2,10 +2,14 @@ import "dotenv/config";
 import express from "express";
 import { Networks } from "@stellar/stellar-sdk";
 import { createAuthRouter } from "./routes/auth";
+import { createAnalyticsRouter } from "./routes/analytics";
 
 /**
  * Issue #675: FluxaPay backend — currently exposes the SEP-10 merchant
  * authentication endpoints (`/auth/challenge`, `/auth/token`).
+ *
+ * Issue #789: adds the merchant dashboard analytics endpoint
+ * (`GET /v1/analytics/revenue`) with daily/weekly/monthly breakdown.
  */
 
 const app = express();
@@ -30,6 +34,15 @@ app.use(
     homeDomain: HOME_DOMAIN,
     // TODO(#675): resolve the merchant id via MerchantRegistryClient instead
     // of falling back to the account's own public key.
+  }),
+);
+
+app.use(
+  "/v1/analytics",
+  createAnalyticsRouter({
+    serverPublicKey: SERVER_PUBLIC_KEY,
+    networkPassphrase: NETWORK_PASSPHRASE,
+    homeDomain: HOME_DOMAIN,
   }),
 );
 
