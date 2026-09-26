@@ -313,3 +313,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 ## Telegram link
 
 <https://t.me/+m23gN14007w0ZmQ0>
+
+## Handsoff notes
+
+<!-- handsoff-issue-830 -->
+- #830: feat: add payment overpayment policy — configurable accept / reject / partial-accept for overpaid amounts
