@@ -53,6 +53,13 @@ pub const SUBSCRIPTION_MAX_RETRIES: u32 = 3;
 /// Spacing between retry attempts in seconds (2 days).
 pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
 
+/// Issue #806: Default cancellation grace period after a successful subscription
+/// charge (24 hours in seconds). Subscribers may cancel within this window and
+/// receive a full refund for the most recent charge.
+pub const GRACE_PERIOD_SECS: u64 = 86_400;
+/// Issue #806: Maximum configurable grace period per plan (3 days in seconds).
+pub const MAX_GRACE_PERIOD_SECS: u64 = 259_200;
+
 // Issue #625: Maximum lengths for user-supplied string fields to prevent ledger bloat.
 pub const MAX_REASON_LEN: usize = 256;
 pub const MAX_EVIDENCE_LEN: usize = 512;
