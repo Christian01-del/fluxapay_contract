@@ -313,3 +313,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 ## Telegram link
 
 <https://t.me/+m23gN14007w0ZmQ0>
+
+## Handsoff notes
+
+<!-- handsoff-issue-805 -->
+- #805: bug: merchant_registry_test.rs tests share a single Soroban test environment, causing test order dependency
