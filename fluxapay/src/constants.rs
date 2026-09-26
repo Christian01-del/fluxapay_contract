@@ -101,3 +101,8 @@ pub const DEFAULT_MAX_API_KEY_LIFETIME_SECS: u64 = 90 * 24 * 60 * 60;
 pub const MAX_PAYMENT_TAGS: u32 = 10;
 /// Issue #823: Maximum length (in bytes) of a single payment tag.
 pub const MAX_TAG_LEN: u32 = 32;
+
+/// Issue #825: Maximum number of milestones a payment stream may define.
+pub const MAX_STREAM_MILESTONES: u32 = 20;
+/// Issue #825: Maximum length (in bytes) of a milestone evidence hash.
+pub const MAX_MILESTONE_EVIDENCE_LEN: u32 = 64;
