@@ -28,6 +28,10 @@ pub const DEFAULT_DISPUTE_DEADLINE_THRESHOLD_AMOUNT: i128 = 1_000_000_000;
 pub const SMALL_DISPUTE_DEADLINE_SECS: u64 = 3 * 24 * 60 * 60;
 pub const LARGE_DISPUTE_DEADLINE_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Issue #797: Window (in ledger seconds) a merchant has to respond to a
+/// pending dispute before it can be auto-resolved in the customer's favour.
+pub const MERCHANT_RESPONSE_WINDOW: u64 = 72 * 60 * 60;
+
 // Issue #167: Tiered refund fees based on merchant KYC tier
 pub const REFUND_FEE_BPS_BASIC: i128 = 100; // 1.0% for Basic tier
 pub const REFUND_FEE_BPS_FULL: i128 = 80; // 0.8% for Full tier
