@@ -144,7 +144,20 @@ Your webhook secret is issued in the merchant dashboard (or sandbox env). Never 
 
 ## Retry policy
 
-If your endpoint does not return HTTP `2xx`:
+Each webhook endpoint has its own retry policy. If your endpoint does not return HTTP `2xx`, FluxaPay retries using that endpoint’s configured policy.
+
+### Default policy
+
+The default policy matches the historical fixed behaviour:
+
+| Field | Default |
+|-------|---------|
+| `max_retries` | `3` |
+| `initial_delay_ms` | `1000` |
+| `backoff_multiplier` | `2.0` |
+| `max_delay_ms` | `300000` |
+
+With the defaults, delivery attempts are spaced as follows:
 
 | Attempt | Delay before retry |
 |---------|--------------------|
@@ -154,8 +167,30 @@ If your endpoint does not return HTTP `2xx`:
 | 4 (final) | ~4s |
 
 - **Max retries:** 3 retries after the first delivery (**4 total attempts**).
-- **Backoff:** exponential (base ~1s).
+- **Backoff:** exponential (base ~1s, multiplier 2.0).
 - After exhaustion, the event is marked failed; you can replay from the dashboard or indexer.
+
+### Customizing the retry policy
+
+Update an endpoint’s policy with `PATCH /v1/webhooks/{endpoint_id}`:
+
+```json
+{
+  "max_retries": 10,
+  "initial_delay_ms": 1000,
+  "backoff_multiplier": 2.0,
+  "max_delay_ms": 300000
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `max_retries` | integer | `1`–`20` | Retries after the first delivery |
+| `initial_delay_ms` | integer | `500`–`60000` | Delay before the first retry, in milliseconds |
+| `backoff_multiplier` | number | `1.0`–`3.0` | Multiplier applied to the delay after each attempt |
+| `max_delay_ms` | integer | `>= 1` | Upper bound on any single retry delay, in milliseconds |
+
+Values outside these ranges are rejected with a descriptive `400` error. The delay before retry `n` is `min(initial_delay_ms * backoff_multiplier^(n-1), max_delay_ms)`.
 
 Return `200` as soon as the event is durably queued; do heavy work out-of-band.
 
@@ -274,183 +309,33 @@ async def fluxapay_webhook(
     raw = await request.body()
     try:
         ts = int(x_fluxapay_timestamp)
-    except ValueError as exc:
-        raise HTTPException(401, "bad timestamp") from exc
+    except ValueError:
+        raise HTTPException(status_code=401, detail="invalid timestamp")
 
     if abs(time.time() - ts) > 300:
-        raise HTTPException(401, "stale timestamp")
+        raise HTTPException(status_code=401, detail="stale timestamp")
 
-    signed = f"{ts}.".encode() + raw
+    signed = f"{x_fluxapay_timestamp}.".encode() + raw
     expected = hmac.new(WEBHOOK_SECRET, signed, hashlib.sha256).hexdigest()
+
     if not hmac.compare_digest(expected, x_fluxapay_signature):
-        raise HTTPException(401, "invalid signature")
+        raise HTTPException(status_code=401, detail="invalid signature")
 
     event = await request.json()
-    payment_id = (event.get("data") or {}).get("payment_id")
-    # TODO: idempotent upsert keyed by payment_id (or event["id"])
-    return {"received": True, "payment_id": payment_id}
+    dedup_key = (
+        event.get("data", {}).get("payment_id")
+        or event.get("data", {}).get("dispute_id")
+        or event.get("id")
+    )
+
+    # TODO: skip if dedup_key already processed
+    print("received", event.get("type"), dedup_key)
+
+    return {"received": True}
 ```
 
 ---
 
-## Testing with the subscription daemon
+## Testing webhooks locally
 
-[`scripts/subscription-daemon.js`](../scripts/subscription-daemon.js) polls due subscriptions and invokes `process_due_subscriptions`. Use it locally to generate recurring payment lifecycle traffic that your webhook stack can observe end-to-end.
-
-### Setup
-
-1. Copy `.env.example` → `.env` and set:
-
-   ```bash
-   STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-   CONTRACT_ID=C...
-   OPERATOR_SECRET=S...
-   POLL_INTERVAL_MS=60000
-   NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-   SUBSCRIPTION_INDEX_PATH=/tmp/fluxapay_subscriptions.json
-   ```
-
-2. Ensure an off-chain index (or the JSON fallback file) lists active subscriptions.
-
-3. Run:
-
-   ```bash
-   node scripts/subscription-daemon.js
-   ```
-
-4. Point your local Express/FastAPI webhook at a tunnel (e.g. ngrok) and register that URL in sandbox.
-
-5. When the daemon bills a subscription, expect `payment.created` → `payment.confirmed` → (optionally) `payment.settled` deliveries.
-
-### Manual signature check
-
-```bash
-BODY='{"id":"evt_test","type":"payment.created","created_at":1710000000,"api_version":"2024-01-01","data":{"payment_id":"pay_test","amount":"100"}}'
-TS=$(date +%s)
-SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$FLUXAPAY_WEBHOOK_SECRET" | awk '{print $2}')
-curl -X POST http://localhost:3000/webhooks/fluxapay \
-  -H "Content-Type: application/json" \
-  -H "X-FluxaPay-Timestamp: $TS" \
-  -H "X-FluxaPay-Signature: $SIG" \
-  -H "X-FluxaPay-Event: payment.created" \
-  -d "$BODY"
-```
-
----
-
-## Security checklist
-
-- [ ] Verify HMAC on **raw** body
-- [ ] Enforce timestamp skew ≤ 5 minutes
-- [ ] Deduplicate with `payment_id` (or entity id)
-- [ ] Respond `2xx` only after durable accept
-- [ ] Rotate webhook secrets without downtime (accept dual secrets briefly)
-- [ ] Prefer HTTPS-only endpoints
-
----
-
-## Related docs
-
-- [On-chain event catalog](events.md)
-- [Architecture & settlement webhooks](architecture.md)
-- [SEP-6 / SEP-24 anchor callbacks](sep6-sep24-anchor-integration.md)
-- [Local invoke recipes](local-invoke.md)
-
----
-
-## Verifying your integration: `POST /v1/webhooks/test`
-
-*(Issue #808)*
-
-Before this endpoint existed, the only way to confirm your handler worked was
-to put a real payment through. This sends a synthetic event to your registered
-endpoint with **real HMAC signing**, so you can exercise your signature
-verification without moving money.
-
-```http
-POST /v1/webhooks/test
-Authorization: Bearer <merchant API key>
-Content-Type: application/json
-
-{ "endpoint_id": "wh_abc123", "event_type": "payment.confirmed" }
-```
-
-Response:
-
-```json
-{
-  "delivery_id": "…",
-  "event_type": "payment.confirmed",
-  "livemode": false,
-  "delivered": true,
-  "http_status": 200,
-  "duration_ms": 142,
-  "response_body": "ok"
-}
-```
-
-Things worth knowing:
-
-- **`livemode` is `false`** and the payload uses `test_`-prefixed identifiers
-  (`payment_id: "test_pay_000000000000"`). A handler that ignores the flag
-  still cannot mistake the delivery for a real payment.
-- **The signature is real**, computed with your endpoint's actual signing
-  secret. If your verification passes here it will pass in production.
-- **Unknown event types are rejected** with `400 UnsupportedEventType` rather
-  than signed and sent, so a typo fails loudly instead of leaving you waiting
-  for a delivery that will never match.
-- **Rate limited to 5 test deliveries per endpoint per hour.** Exceeding it
-  returns `429` with `Retry-After`.
-- A `200` means *the test ran*; whether your endpoint accepted it is in
-  `delivered` and `http_status`.
-
-## Delivery history: `GET /v1/webhooks/{endpoint_id}/deliveries`
-
-*(Issue #810)*
-
-Every delivery attempt — live and test, success and failure — is logged.
-
-```http
-GET /v1/webhooks/wh_abc123/deliveries?payment_id=pay_123&limit=20
-Authorization: Bearer <merchant API key>
-```
-
-```json
-{
-  "data": [
-    {
-      "id": "…",
-      "endpoint_id": "wh_abc123",
-      "event_type": "payment.confirmed",
-      "payment_id": "pay_123",
-      "attempt_number": 2,
-      "delivered_at": "2026-09-26T10:31:00.000Z",
-      "http_status": 500,
-      "response_body": "Internal Server Error",
-      "duration_ms": 3011,
-      "success": false,
-      "livemode": true
-    }
-  ],
-  "next_before": "2026-09-26T10:31:00.000Z",
-  "retention_days": 30
-}
-```
-
-- **Paginate with `before`**, passing the previous page's `next_before`. This
-  is keyset pagination rather than an offset, so deliveries arriving while you
-  page cannot push a row you are hunting for past unseen.
-- **`response_body` is truncated to 1 KB.** A failing endpoint often returns a
-  full HTML error page; the first kilobyte carries the status line and any
-  JSON error worth acting on.
-- **Logs are purged after 30 days.** This is a debugging aid, not a ledger.
-- A missing endpoint and an endpoint belonging to another merchant both return
-  `404`, so endpoint ids cannot be enumerated.
-
-### Signature scheme
-
-The `x-fluxapay-signature` header is `t=<unix-seconds>,v1=<hex-hmac>`, and the
-signed material is `<timestamp>.<raw-body>`. The timestamp is inside the
-signature deliberately: signing the body alone would let anyone who captured a
-delivery replay it indefinitely. Reject deliveries whose timestamp is more
-than 5 minutes old, and compare signatures with a constant-time function.
+Use a tunnel (ngrok, cloudflared) to expose your local server, register the URL in the sandbox dashboard, and trigger events from the sandbox. Verify signatures with the sandbox secret before going live.
