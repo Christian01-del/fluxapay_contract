@@ -313,3 +313,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 ## Telegram link
 
 <https://t.me/+m23gN14007w0ZmQ0>
+
+## Handsoff notes
+
+<!-- handsoff-issue-824 -->
+- #824: docs: document the full payment lifecycle state diagram with Mermaid chart in architecture.md
