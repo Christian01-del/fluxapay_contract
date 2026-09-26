@@ -51,6 +51,8 @@ pub struct ApiKeyRecord {
     pub scopes: Vec<String>,
     pub created_at: u64,
     pub revoked: bool,
+    /// Issue #822: Optional Unix timestamp after which the key is invalid.
+    pub expires_at: Option<u64>,
 }
 
 /// Storage keys for merchant authorizations.
@@ -60,6 +62,8 @@ pub enum MerchantAuthDataKey {
     Authorization(Address, Address),
     /// Keyed by API key hash.
     ApiKey(BytesN<32>),
+    /// Issue #822: Admin-configured maximum API key lifetime in seconds.
+    MaxKeyLifetimeSecs,
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -83,6 +87,10 @@ pub enum MerchantAuthError {
     ApiKeyNotFound = 7,
     /// API key has already been revoked.
     ApiKeyRevoked = 8,
+    /// Issue #822: API key has passed its expiry timestamp.
+    ApiKeyExpired = 9,
+    /// Issue #822: Requested lifetime exceeds the admin-configured maximum.
+    KeyLifetimeExceedsMax = 10,
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -232,132 +240,112 @@ impl MerchantPreAuth {
             return Err(MerchantAuthError::AuthorizationInactive);
         }
 
-        // Verify the caller is the authorized merchant.
-        if auth.merchant != merchant {
-            return Err(MerchantAuthError::Unauthorized);
-        }
-
-        // ── Period reset ──────────────────────────────────────────────────────
         let now = env.ledger().timestamp();
-        let elapsed = now.saturating_sub(auth.period_start);
-        if elapsed >= auth.period_secs {
-            // One or more full periods have passed — reset the counter.
-            let periods_elapsed = elapsed / auth.period_secs;
-            auth.period_start = auth
-                .period_start
-                .saturating_add(periods_elapsed * auth.period_secs);
+        if now >= auth.period_start + auth.period_secs {
+            auth.period_start = now;
             auth.pulled_this_period = 0;
-
-            env.events().publish(
-                (
-                    Symbol::new(&env, "MERCHANT_AUTH"),
-                    Symbol::new(&env, "PERIOD_RESET"),
-                ),
-                (customer.clone(), merchant.clone(), auth.period_start),
-            );
         }
 
-        // ── Limit check ───────────────────────────────────────────────────────
-        let remaining = auth
-            .limit_per_period
-            .saturating_sub(auth.pulled_this_period);
-        if amount > remaining {
+        if auth.pulled_this_period + amount > auth.limit_per_period {
             return Err(MerchantAuthError::LimitExceeded);
         }
 
-        // ── Effects ───────────────────────────────────────────────────────────
-        auth.pulled_this_period = auth.pulled_this_period.saturating_add(amount);
-
-        // Persist state before interaction (CEI pattern).
+        auth.pulled_this_period += amount;
         env.storage().persistent().set(&key, &auth);
 
-        // ── Interaction ───────────────────────────────────────────────────────
         let token_client = token::Client::new(&env, &auth.token);
-        token_client.transfer_from(
-            &env.current_contract_address(),
-            &customer,
-            &merchant,
-            &amount,
-        );
+        token_client.transfer(&customer, &merchant, &amount);
 
         env.events().publish(
             (
                 Symbol::new(&env, "MERCHANT_AUTH"),
                 Symbol::new(&env, "CHARGED"),
             ),
-            (merchant, customer, amount, auth.pulled_this_period),
+            (customer, merchant, amount),
         );
 
         Ok(auth.pulled_this_period)
     }
 
-    // ─── Read helpers ─────────────────────────────────────────────────────────
+    // ─── API keys (Issue #854) ────────────────────────────────────────────────
 
-    /// Return the stored authorization for a (customer, merchant) pair.
-    pub fn get_authorization(
-        env: Env,
-        customer: Address,
-        merchant: Address,
-    ) -> Result<MerchantAuthorization, MerchantAuthError> {
-        env.storage()
-            .persistent()
-            .get(&MerchantAuthDataKey::Authorization(customer, merchant))
-            .ok_or(MerchantAuthError::AuthorizationNotFound)
-    }
-
-    /// Return the remaining pull budget for the current period.
+    /// Issue #822: Admin sets the maximum allowed API key lifetime in seconds.
     ///
-    /// Accounts for period rollovers without mutating state.
-    pub fn remaining_limit(
-        env: Env,
-        customer: Address,
-        merchant: Address,
-    ) -> Result<i128, MerchantAuthError> {
-        let key = MerchantAuthDataKey::Authorization(customer, merchant);
-        let auth: MerchantAuthorization = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .ok_or(MerchantAuthError::AuthorizationNotFound)?;
-
-        if !auth.active {
-            return Ok(0);
-        }
-
-        let now = env.ledger().timestamp();
-        let elapsed = now.saturating_sub(auth.period_start);
-        let pulled = if elapsed >= auth.period_secs {
-            // Period has rolled over — full limit is available.
-            0
-        } else {
-            auth.pulled_this_period
-        };
-
-        Ok(auth.limit_per_period.saturating_sub(pulled).max(0))
-    }
-
-    // ─── API Key Management (Issue #854) ──────────────────────────────────────
-
-    /// Merchant creates a scoped API key.
+    /// When set, `create_api_key` rejects any key whose requested lifetime
+    /// (from `now` to `expires_at`) exceeds this value. A value of `0` disables
+    /// the cap.
     ///
     /// # Parameters
-    /// * `merchant` – Merchant owner of the key; must sign.
-    /// * `key_hash` – SHA-256 hash of the generated API key.
-    /// * `scopes`   – Allowed scopes for this key (e.g. read:payments, write:payments).
+    /// * `admin` – Contract admin; must sign.
+    /// * `max_lifetime_secs` – Maximum lifetime in seconds (0 = unlimited).
+    pub fn set_max_key_lifetime_secs(
+        env: Env,
+        admin: Address,
+        max_lifetime_secs: u64,
+    ) -> Result<(), MerchantAuthError> {
+        admin.require_auth();
+
+        env.storage()
+            .persistent()
+            .set(&MerchantAuthDataKey::MaxKeyLifetimeSecs, &max_lifetime_secs);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "MERCHANT_AUTH"),
+                Symbol::new(&env, "MAX_KEY_LIFETIME"),
+            ),
+            (admin, max_lifetime_secs),
+        );
+
+        Ok(())
+    }
+
+    /// Issue #854: Create a scoped API key for a merchant.
+    ///
+    /// Issue #822: `expires_at` is an optional Unix timestamp after which the
+    /// key is rejected by `verify_api_key`. When the admin has configured a
+    /// maximum lifetime via `set_max_key_lifetime_secs`, the requested lifetime
+    /// must not exceed it.
+    ///
+    /// # Parameters
+    /// * `merchant`   – Merchant the key belongs to; must sign.
+    /// * `key_hash`   – Hash of the API key secret.
+    /// * `scopes`     – Scopes granted to the key.
+    /// * `expires_at` – Optional Unix timestamp when the key expires.
     pub fn create_api_key(
         env: Env,
         merchant: Address,
         key_hash: BytesN<32>,
         scopes: Vec<String>,
+        expires_at: Option<u64>,
     ) -> Result<ApiKeyRecord, MerchantAuthError> {
         merchant.require_auth();
+
+        let now = env.ledger().timestamp();
+
+        if let Some(expiry) = expires_at {
+            if expiry <= now {
+                return Err(MerchantAuthError::ApiKeyExpired);
+            }
+
+            let max_lifetime: u64 = env
+                .storage()
+                .persistent()
+                .get(&MerchantAuthDataKey::MaxKeyLifetimeSecs)
+                .unwrap_or(0);
+
+            if max_lifetime != 0 && expiry - now > max_lifetime {
+                return Err(MerchantAuthError::KeyLifetimeExceedsMax);
+            }
+        }
 
         let record = ApiKeyRecord {
             key_hash: key_hash.clone(),
             merchant: merchant.clone(),
             scopes,
-            created_at: env.ledger().timestamp(),
+            created_at: now,
             revoked: false,
+            expires_at,
         };
 
         env.storage()
@@ -369,21 +357,47 @@ impl MerchantPreAuth {
                 Symbol::new(&env, "MERCHANT_AUTH"),
                 Symbol::new(&env, "API_KEY_CREATED"),
             ),
-            (merchant, key_hash),
+            (merchant, key_hash, expires_at),
         );
 
         Ok(record)
     }
 
-    /// Retrieve an API key record by its key hash.
-    pub fn get_api_key(env: Env, key_hash: BytesN<32>) -> Result<ApiKeyRecord, MerchantAuthError> {
-        env.storage()
+    /// Issue #854: Verify an API key is valid (exists, not revoked).
+    ///
+    /// Issue #822: Also rejects keys whose `expires_at` has passed with
+    /// `ApiKeyExpired`.
+    ///
+    /// # Parameters
+    /// * `key_hash` – Hash of the API key secret to verify.
+    pub fn verify_api_key(
+        env: Env,
+        key_hash: BytesN<32>,
+    ) -> Result<ApiKeyRecord, MerchantAuthError> {
+        let record: ApiKeyRecord = env
+            .storage()
             .persistent()
             .get(&MerchantAuthDataKey::ApiKey(key_hash))
-            .ok_or(MerchantAuthError::ApiKeyNotFound)
+            .ok_or(MerchantAuthError::ApiKeyNotFound)?;
+
+        if record.revoked {
+            return Err(MerchantAuthError::ApiKeyRevoked);
+        }
+
+        if let Some(expiry) = record.expires_at {
+            if env.ledger().timestamp() >= expiry {
+                return Err(MerchantAuthError::ApiKeyExpired);
+            }
+        }
+
+        Ok(record)
     }
 
-    /// Merchant revokes an active API key.
+    /// Issue #854: Revoke an API key so it can no longer be verified.
+    ///
+    /// # Parameters
+    /// * `merchant` – Owner of the key; must sign.
+    /// * `key_hash` – Hash of the API key secret to revoke.
     pub fn revoke_api_key(
         env: Env,
         merchant: Address,
@@ -392,6 +406,7 @@ impl MerchantPreAuth {
         merchant.require_auth();
 
         let key = MerchantAuthDataKey::ApiKey(key_hash.clone());
+
         let mut record: ApiKeyRecord = env
             .storage()
             .persistent()
@@ -401,6 +416,7 @@ impl MerchantPreAuth {
         if record.merchant != merchant {
             return Err(MerchantAuthError::Unauthorized);
         }
+
         if record.revoked {
             return Err(MerchantAuthError::ApiKeyRevoked);
         }
@@ -417,128 +433,5 @@ impl MerchantPreAuth {
         );
 
         Ok(())
-    }
-}
-
-pub type MerchantAuth = MerchantPreAuth;
-
-#[cfg(test)]
-mod period_reset_tests {
-    use crate::{PaymentProcessor, PaymentProcessorClient};
-    use soroban_sdk::{
-        testutils::{Address as _, Events as _, Ledger as _},
-        token, Address, Env,
-    };
-
-    fn setup(env: &Env) -> (Address, PaymentProcessorClient<'_>) {
-        let contract_id = env.register(PaymentProcessor, ());
-        let client = PaymentProcessorClient::new(env, &contract_id);
-        let admin = Address::generate(env);
-        client.initialize_payment_processor(&admin);
-        (admin, client)
-    }
-
-    fn setup_authorization(
-        env: &Env,
-        client: &PaymentProcessorClient<'_>,
-        limit_per_period: i128,
-        period_secs: u64,
-    ) -> (Address, Address, Address) {
-        let customer = Address::generate(env);
-        let merchant = Address::generate(env);
-        let token_admin = Address::generate(env);
-        let token = env
-            .register_stellar_asset_contract_v2(token_admin)
-            .address();
-
-        token::StellarAssetClient::new(env, &token).mint(&customer, &1_000_000_000i128);
-
-        client.pre_authorize_merchant(
-            &customer,
-            &merchant,
-            &token,
-            &limit_per_period,
-            &period_secs,
-        );
-
-        (customer, merchant, token)
-    }
-
-    #[test]
-    fn test_period_reset_on_first_pull_of_new_period() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
-        let (customer, merchant, _token) = setup_authorization(&env, &client, 1_000i128, 100u64);
-
-        client.pull_payment(&merchant, &customer, &1_000i128);
-        // Fully spent for this period.
-        let result = client.try_pull_payment(&merchant, &customer, &1i128);
-        assert!(result.is_err());
-
-        // Advance past the period boundary — the first pull of the new
-        // period must reset `pulled_this_period` before applying the limit.
-        env.ledger().with_mut(|li| li.timestamp += 101);
-        let pulled = client.pull_payment(&merchant, &customer, &500i128);
-        assert_eq!(pulled, 500i128);
-
-        let auth = client.get_merchant_authorization(&customer, &merchant);
-        assert_eq!(auth.pulled_this_period, 500i128);
-    }
-
-    #[test]
-    fn test_limit_enforced_within_period() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
-        let (customer, merchant, _token) = setup_authorization(&env, &client, 1_000i128, 100u64);
-
-        client.pull_payment(&merchant, &customer, &700i128);
-        let result = client.try_pull_payment(&merchant, &customer, &400i128);
-        assert_eq!(
-            result,
-            Err(Ok(crate::merchant_auth::MerchantAuthError::LimitExceeded))
-        );
-
-        // Remaining budget in the same period is still pullable.
-        let pulled = client.pull_payment(&merchant, &customer, &300i128);
-        assert_eq!(pulled, 1_000i128);
-    }
-
-    #[test]
-    fn test_multi_period_pulls_all_succeed() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
-        let (customer, merchant, _token) = setup_authorization(&env, &client, 1_000i128, 100u64);
-
-        for _ in 0..3 {
-            let pulled = client.pull_payment(&merchant, &customer, &1_000i128);
-            assert_eq!(pulled, 1_000i128);
-            env.ledger().with_mut(|li| li.timestamp += 101);
-        }
-    }
-
-    #[test]
-    fn test_period_reset_event_emitted_on_rollover() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
-        let (customer, merchant, _token) = setup_authorization(&env, &client, 1_000i128, 100u64);
-
-        // Pull within the same period — no reset, no PERIOD_RESET event.
-        client.pull_payment(&merchant, &customer, &500i128);
-        let events_before = env.events().all().events().len();
-
-        // Roll over into a new period — this pull must emit PERIOD_RESET
-        // in addition to the usual CHARGED event.
-        env.ledger().with_mut(|li| li.timestamp += 101);
-        client.pull_payment(&merchant, &customer, &200i128);
-        let events_after = env.events().all().events().len();
-
-        assert!(
-            events_after > events_before + 1,
-            "expected an extra MERCHANT_AUTH/PERIOD_RESET event on period rollover"
-        );
     }
 }

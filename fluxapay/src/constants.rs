@@ -91,3 +91,8 @@ pub const INITIAL_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Default timelock delay for critical admin operations: 48 hours.
 pub const DEFAULT_TIMELOCK_SECS: u64 = 48 * 60 * 60;
+
+/// Issue #822: Default maximum lifetime for delegated merchant API keys
+/// (90 days in seconds). Used when the admin has not configured an explicit
+/// `max_key_lifetime_secs` via `set_max_key_lifetime_secs`.
+pub const DEFAULT_MAX_API_KEY_LIFETIME_SECS: u64 = 90 * 24 * 60 * 60;
