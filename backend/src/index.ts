@@ -2,10 +2,14 @@ import "dotenv/config";
 import express from "express";
 import { Networks } from "@stellar/stellar-sdk";
 import { createAuthRouter } from "./routes/auth";
+import { createSettlementRouter } from "./routes/settlements";
 
 /**
  * Issue #675: FluxaPay backend — currently exposes the SEP-10 merchant
  * authentication endpoints (`/auth/challenge`, `/auth/token`).
+ *
+ * Issue #828: also exposes the SEP-6/SEP-24 anchor off-ramp settlement
+ * endpoints (`/settlements`) used to automate merchant fiat settlement.
  */
 
 const app = express();
@@ -30,6 +34,14 @@ app.use(
     homeDomain: HOME_DOMAIN,
     // TODO(#675): resolve the merchant id via MerchantRegistryClient instead
     // of falling back to the account's own public key.
+  }),
+);
+
+app.use(
+  "/settlements",
+  createSettlementRouter({
+    networkPassphrase: NETWORK_PASSPHRASE,
+    homeDomain: HOME_DOMAIN,
   }),
 );
 
