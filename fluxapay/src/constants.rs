@@ -96,3 +96,8 @@ pub const DEFAULT_TIMELOCK_SECS: u64 = 48 * 60 * 60;
 /// (90 days in seconds). Used when the admin has not configured an explicit
 /// `max_key_lifetime_secs` via `set_max_key_lifetime_secs`.
 pub const DEFAULT_MAX_API_KEY_LIFETIME_SECS: u64 = 90 * 24 * 60 * 60;
+
+/// Issue #823: Maximum number of tags a payment may carry.
+pub const MAX_PAYMENT_TAGS: u32 = 10;
+/// Issue #823: Maximum length (in bytes) of a single payment tag.
+pub const MAX_TAG_LEN: u32 = 32;
