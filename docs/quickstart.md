@@ -32,6 +32,35 @@ subsequent API calls. The SDK's `SEP10Authenticator` (`sdk/src/sep10.ts`)
 implements the client-side signing/verification flow if you'd rather not
 call the REST endpoints directly.
 
+### Auto-refreshing expiring tokens (Issue #793)
+
+Long-running applications shouldn't have to re-authenticate manually when the
+JWT expires. Pass an optional `refreshCredentials` callback to `FluxapayClient`
+and the SDK will transparently renew the token before it expires:
+
+```typescript
+const client = new FluxapayClient({
+  network: "testnet",
+  contractId: process.env.PAYMENT_PROCESSOR_ID!,
+  merchantRegistryContractId: process.env.MERCHANT_REGISTRY_ID!,
+  // Called automatically when the current token is within
+  // `refreshThresholdMs` (default 5 minutes) of expiry.
+  refreshCredentials: async () => {
+    // Re-run your SEP-10 challenge/sign/token exchange and return the new JWT.
+    return await sep10.authenticate();
+  },
+  // Optional: override the default 5-minute refresh threshold.
+  refreshThresholdMs: 5 * 60 * 1000,
+});
+```
+
+Behavior:
+
+- Before each authenticated request the SDK checks `token.exp - Date.now() < refreshThresholdMs`.
+- If the token is within the threshold, `refreshCredentials` is invoked once and the new token is stored and used for the request.
+- Concurrent requests during a refresh are queued behind a mutex, so only one refresh happens and the others wait for the new token.
+- If `refreshCredentials` throws, the original `401 Unauthorized` is surfaced to the caller.
+
 ## 2. Install the SDK
 
 ```bash
