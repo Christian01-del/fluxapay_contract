@@ -179,6 +179,23 @@ console.log(`Merchant will be settled ${settlementAmount} NGN`);
 
 Settlement events (`payment.settled`) are emitted the same way as `payment.confirmed` — see [docs/webhooks.md](webhooks.md) for the full event list.
 
+## 9. Track payment link analytics
+
+Measure how well a payment link converts by comparing views against completed payments. The on-chain `get_link_stats(link_id)` view returns `views`, `completions`, and `total_volume` atomically, and the API exposes the same data with a derived conversion rate:
+
+```typescript
+const stats = await client.getLinkStats(linkId);
+console.log(stats);
+// {
+//   views: 40,
+//   completions: 5,
+//   total_volume: 50000000n, // 5.00 USDC (7 decimals)
+//   conversion_rate: "12.5%",
+// }
+```
+
+The endpoint (`GET /v1/payment-links/{id}/stats`) requires merchant authentication — include your SEP-10 JWT as `Authorization: Bearer <token>`. `conversion_rate` is returned as a string percentage (e.g. `"12.5%"`), computed as `completions / views`.
+
 ## Common errors and fixes
 
 | Error | Cause | Fix |
