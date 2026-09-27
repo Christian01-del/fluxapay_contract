@@ -85,6 +85,8 @@ pub struct PaymentCharge {
     /// for tracing a payment back to its source link. `None` for payments created
     /// directly via `create_payment`/`swap_and_pay`.
     pub payment_link_id: Option<String>,
+    tip_enabled: false,
+    tip_amount: None,
 }
 
 #[contracttype]
@@ -102,6 +104,8 @@ pub struct VerifyPaymentArgs {
 pub struct PaymentSummary {
     pub payment_id: String,
     pub amount: i128,
+    /// Issue #844: Tip itemized separately from base amount.
+    pub tip_amount: i128,
     pub fee: i128,
     pub refund_amount: i128,
     pub status: PaymentStatus,
@@ -436,7 +440,8 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
-}
+        tip_enabled: false,
+    }
 
 /// Arguments for a single dispute in `batch_create_disputes` / `create_dispute`.
 #[contracttype]
@@ -558,7 +563,8 @@ pub struct VoteTally {
     pub against_weight: i128,
     /// Number of arbitrators who have voted.
     pub vote_count: u32,
-}
+            total_registered_weight: 0,
+        }
 
 /// Number of `ARBITRATOR`-role votes (either direction) required to
 /// auto-execute a dispute resolution via [`FluxaPayContract::vote_dispute`].
@@ -588,7 +594,7 @@ pub struct ArbitratorVote {
 pub struct ArbitratorVoteTally {
     pub approve_count: u32,
     pub reject_count: u32,
-}
+        }
 
 /// Record of a single admin treasury withdrawal.
 #[contracttype]
@@ -1609,6 +1615,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -1782,6 +1790,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -4007,7 +4017,8 @@ pub use merchant_registry::{
                     favour_weight: 0,
                     against_weight: 0,
                     vote_count: 0,
-                });
+                            total_registered_weight: 0,
+        });
 
         match choice {
             VoteChoice::Favour => tally.favour_weight = tally.favour_weight.saturating_add(stake),
@@ -4069,7 +4080,8 @@ pub use merchant_registry::{
                 favour_weight: 0,
                 against_weight: 0,
                 vote_count: 0,
-            });
+                        total_registered_weight: 0,
+        });
 
         // Determine majority
         let favour_wins = tally.favour_weight >= tally.against_weight;
@@ -4213,7 +4225,7 @@ pub use merchant_registry::{
                 .unwrap_or(ArbitratorVoteTally {
                     approve_count: 0,
                     reject_count: 0,
-                });
+        });
 
         match choice {
             ArbitratorVoteChoice::Approve => {
@@ -4296,7 +4308,8 @@ pub use merchant_registry::{
                 favour_weight: 0,
                 against_weight: 0,
                 vote_count: 0,
-            })
+                        total_registered_weight: 0,
+        })
     }
 
     pub fn get_dispute(env: Env, dispute_id: String) -> Result<Dispute, Error> {
@@ -5343,6 +5356,8 @@ pub use merchant_registry::{
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         env.storage()
@@ -5702,6 +5717,8 @@ pub use merchant_registry::{
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
 
             env.storage()
@@ -7363,6 +7380,8 @@ impl PaymentProcessor {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         env.storage()
@@ -7646,6 +7665,8 @@ impl PaymentProcessor {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
 
             env.storage()
@@ -8248,6 +8269,8 @@ impl PaymentProcessor {
             retry_of_payment_id: Some(original_payment_id.clone()),
             payer_muxed_id: None,
             payment_link_id: original.payment_link_id.clone(),
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         // Store new payment
@@ -9863,7 +9886,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 
@@ -9965,7 +9989,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 

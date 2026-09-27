@@ -78,6 +78,7 @@ fn test_global_pause_blocks_creation() {
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     });
 
     assert!(res.is_err());
@@ -126,6 +127,7 @@ fn test_creation_pause_blocks_only_creation() {
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     });
     assert!(res.is_err());
 
@@ -182,6 +184,7 @@ fn test_all_write_ops_blocked_when_paused() {
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     });
 
     // Set global pause

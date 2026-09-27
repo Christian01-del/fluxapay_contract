@@ -91,6 +91,25 @@ These cover the highest-risk runtime configuration changes: pause state, token a
 
 The multi-sig proposal path is not used for every admin operation. In the current implementation, direct admin-auth or timelocked actions such as contract upgrades and treasury withdrawals remain outside the `AdminAction` proposal list and follow their own execution flow. This keeps the governance surface explicit and prevents the proposal system from becoming a catch-all for unrelated privileged actions.
 
+### Issue #846 — Time-locked WASM upgrade governance
+
+Contract WASM upgrades follow a dedicated propose → wait → execute path rather
+than the N-of-M `AdminAction` proposal list:
+
+1. **`propose_upgrade(admin, new_wasm_hash)`** — admin stores the target WASM
+   hash and `earliest_execute = current_ledger + UPGRADE_TIMELOCK_LEDGERS`
+   (default ~48h). Emits `UPGRADE/PROPOSED`.
+2. **Timelock window** — `execute_upgrade` reverts with `TimelockNotExpired`
+   until `earliest_execute` is reached, giving operators time to review or abort.
+3. **`execute_upgrade(admin)`** — verifies the stored hash is the hash applied
+   via `update_current_contract_wasm`, clears the proposal, bumps the contract
+   version, and emits `UPGRADE/EXECUTED`.
+4. **`cancel_upgrade(admin)`** — clears a pending proposal before execution.
+
+This complements (does not replace) multi-sig admin proposals: upgrades keep an
+explicit hash + ledger timelock so a compromised or mistaken admin key cannot
+swap WASM instantly, while day-to-day config changes remain on the N-of-M path.
+
 ## Alternatives considered
 
 ### 1. Timelock only

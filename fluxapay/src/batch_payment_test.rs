@@ -77,6 +77,7 @@ fn test_create_payments_batch_all_succeed() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -97,6 +98,7 @@ fn test_create_payments_batch_all_succeed() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -133,6 +135,7 @@ fn test_create_payments_batch_one_invalid_amount_fails_all() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -153,6 +156,7 @@ fn test_create_payments_batch_one_invalid_amount_fails_all() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -192,6 +196,7 @@ fn test_create_payments_batch_duplicate_idempotency_key_within_batch() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -212,6 +217,7 @@ fn test_create_payments_batch_duplicate_idempotency_key_within_batch() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -283,6 +289,7 @@ fn test_create_payments_batch_events_emitted_for_each() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -303,6 +310,7 @@ fn test_create_payments_batch_events_emitted_for_each() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];

@@ -171,6 +171,11 @@ export interface CreatePaymentParams {
    * codes.
    */
   feeWaiverCode?: string;
+  /**
+   * Issue #844: When true, checkout may collect an optional tip via
+   * `confirmPayment({ tipAmount })`.
+   */
+  tipEnabled?: boolean;
 }
 
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
@@ -733,6 +738,7 @@ function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
     metadata_hash: undefined,
     metadata: params.metadata,
     fee_waiver_code: params.feeWaiverCode,
+    tip_enabled: params.tipEnabled ?? false,
   };
 }
 
@@ -945,6 +951,35 @@ export class FluxapayClient {
         transaction_hash: params.transactionHash,
         payer_address: params.payerAddress,
         amount_received: params.amountReceived,
+      }),
+    );
+  }
+
+  /**
+   * Issue #844: Confirm a payment (checkout flow), optionally with a tip.
+   * `tipAmount` is only accepted when the payment was created with
+   * `tipEnabled: true`. Tip is stored separately from base `amount`.
+   */
+  async confirmPayment(params: {
+    oracle: string;
+    paymentId: string;
+    transactionHash: Buffer;
+    payerAddress: string;
+    amountReceived: bigint;
+    tipAmount?: bigint;
+    payerMuxedId?: bigint;
+  }) {
+    return withMappedContractError(() =>
+      (this.contract as any).confirm_payment({
+        oracle: params.oracle,
+        args: {
+          payment_id: params.paymentId,
+          transaction_hash: params.transactionHash,
+          payer_address: params.payerAddress,
+          amount_received: params.amountReceived,
+          tip_amount: params.tipAmount,
+          payer_muxed_id: params.payerMuxedId,
+        },
       }),
     );
   }

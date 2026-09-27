@@ -1500,6 +1500,8 @@ impl PaymentProcessor {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            tip_enabled: args.tip_enabled,
+            tip_amount: None,
         };
 
         env.storage()
@@ -1783,6 +1785,8 @@ impl PaymentProcessor {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: args.tip_enabled,
+                tip_amount: None,
             };
 
             env.storage()
@@ -1858,21 +1862,76 @@ impl PaymentProcessor {
         amount_received: i128,
         payer_muxed_id: Option<u64>,
     ) -> Result<PaymentStatus, Error> {
+        Self::confirm_payment(
+            env,
+            oracle,
+            ConfirmPaymentArgs {
+                payment_id,
+                transaction_hash,
+                payer_address,
+                amount_received,
+                tip_amount: None,
+                payer_muxed_id,
+            },
+        )
+    }
+
+    /// Issue #844: Confirm a payment, optionally recording a tip when enabled.
+    ///
+    /// `tip_amount` is accepted only when the payment was created with
+    /// `tip_enabled = true`. The tip is stored separately from `amount` and
+    /// emits `PAYMENT/TIP_RECEIVED` when present.
+    #[allow(deprecated)]
+    pub fn confirm_payment(
+        env: Env,
+        oracle: Address,
+        args: ConfirmPaymentArgs,
+    ) -> Result<PaymentStatus, Error> {
         Self::require_not_paused(&env)?;
         oracle.require_auth();
         Self::require_not_blacklisted(&env, &oracle)?;
-        Self::require_not_blacklisted(&env, &payer_address)?;
+        Self::require_not_blacklisted(&env, &args.payer_address)?;
 
         if !AccessControl::has_role(&env, &role_oracle(&env), &oracle) {
             return Err(Error::Unauthorized);
         }
 
+        let payment_id = args.payment_id.clone();
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::require_not_blacklisted(&env, &payment.merchant_id)?;
+
+        // Issue #844: tip only allowed when the merchant opted in at creation.
+        if let Some(tip) = args.tip_amount {
+            if !payment.tip_enabled {
+                return Err(Error::InvalidAmount);
+            }
+            if tip < 0 {
+                return Err(Error::InvalidAmount);
+            }
+            payment.tip_amount = Some(tip);
+            if tip > 0 {
+                env.events().publish(
+                    (
+                        Symbol::new(&env, "PAYMENT"),
+                        Symbol::new(&env, "TIP_RECEIVED"),
+                    ),
+                    (payment_id.clone(), tip),
+                );
+            }
+        }
 
         // Issue #75: Enforce idempotent verify_payment - reject double verification
         // If payment is already Confirmed, return current status without error
         if payment.status == PaymentStatus::Confirmed {
+            // Persist tip if this is a tip-only update on an already-confirmed payment
+            if args.tip_amount.is_some() {
+                env.storage()
+                    .persistent()
+                    .set(
+                        &DataKey::Payment(payment_id_to_key(&env, &payment_id)),
+                        &payment,
+                    );
+            }
             return Ok(payment.status);
         }
 
@@ -1884,6 +1943,11 @@ impl PaymentProcessor {
         if env.ledger().timestamp() > payment.expires_at {
             return Err(Error::PaymentExpired);
         }
+
+        let transaction_hash = args.transaction_hash.clone();
+        let payer_address = args.payer_address.clone();
+        let amount_received = args.amount_received;
+        let payer_muxed_id = args.payer_muxed_id;
 
         // Record the actual amount received for reconciliation
         payment.amount_received = Some(amount_received);
@@ -2385,6 +2449,8 @@ impl PaymentProcessor {
             retry_of_payment_id: Some(original_payment_id.clone()),
             payer_muxed_id: None,
             payment_link_id: original.payment_link_id.clone(),
+            tip_enabled: original.tip_enabled,
+            tip_amount: None,
         };
 
         // Store new payment
@@ -2783,9 +2849,11 @@ impl PaymentProcessor {
                         0
                     };
 
+                    let tip = payment.tip_amount.unwrap_or(0);
                     let summary = PaymentSummary {
                         payment_id: payment.payment_id.clone(),
                         amount: payment.amount,
+                        tip_amount: tip,
                         fee,
                         refund_amount,
                         status: payment.status.clone(),
@@ -2793,7 +2861,8 @@ impl PaymentProcessor {
                     };
 
                     payments_in_period.push_back(summary.clone());
-                    total_gross += payment.amount;
+                    // Tip is included in settlement gross but itemized separately above.
+                    total_gross += payment.amount.saturating_add(tip);
                     total_fees += fee;
                     total_refunds += refund_amount;
                 }
@@ -3983,7 +4052,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 
@@ -4085,7 +4155,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 
@@ -4912,6 +4983,122 @@ impl PaymentProcessor {
             admin,
             TimelockActionKind::UpgradeContract(new_wasm_hash),
         )
+    }
+
+    // ── Issue #846: Explicit propose / execute / cancel WASM upgrade path ─────
+
+    /// Propose a WASM upgrade. Stores `new_wasm_hash` and
+    /// `earliest_execute = current_ledger + UPGRADE_TIMELOCK_LEDGERS`.
+    /// Emits `UPGRADE/PROPOSED`.
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
+            return Err(Error::Unauthorized);
+        }
+
+        let earliest_execute = env
+            .ledger()
+            .sequence()
+            .saturating_add(UPGRADE_TIMELOCK_LEDGERS);
+        let proposal = WasmUpgradeProposal {
+            new_wasm_hash: new_wasm_hash.clone(),
+            earliest_execute,
+            proposed_by: admin,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingWasmUpgrade, &proposal);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "UPGRADE"),
+                Symbol::new(&env, "PROPOSED"),
+            ),
+            (new_wasm_hash, earliest_execute),
+        );
+        Ok(())
+    }
+
+    /// Execute a pending upgrade after the timelock. Reverts with
+    /// `TimelockNotExpired` if called before `earliest_execute`. Verifies the
+    /// stored hash is applied via `update_current_contract_wasm`. Emits
+    /// `UPGRADE/EXECUTED`.
+    pub fn execute_upgrade(env: Env, admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
+            return Err(Error::Unauthorized);
+        }
+
+        let proposal: WasmUpgradeProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingWasmUpgrade)
+            .ok_or(Error::PaymentNotFound)?;
+
+        if env.ledger().sequence() < proposal.earliest_execute {
+            return Err(Error::TimelockNotExpired);
+        }
+
+        let stored_hash = proposal.new_wasm_hash.clone();
+        // Hash verification: apply exactly the hash stored at propose time.
+        let old_version: String = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or_else(|| String::from_str(&env, INITIAL_CONTRACT_VERSION));
+        let new_version_str = bump_version_string(&env, &old_version);
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingWasmUpgrade);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &new_version_str);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "UPGRADE"),
+                Symbol::new(&env, "EXECUTED"),
+            ),
+            (stored_hash.clone(), old_version, new_version_str),
+        );
+
+        env.deployer()
+            .update_current_contract_wasm(stored_hash);
+        Ok(())
+    }
+
+    /// Cancel a pending upgrade proposal before it is executed.
+    pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
+            return Err(Error::Unauthorized);
+        }
+        if !env.storage().persistent().has(&DataKey::PendingWasmUpgrade) {
+            return Err(Error::PaymentNotFound);
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingWasmUpgrade);
+        env.events().publish(
+            (
+                Symbol::new(&env, "UPGRADE"),
+                Symbol::new(&env, "CANCELLED"),
+            ),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Return the pending WASM upgrade proposal, if any.
+    pub fn get_pending_upgrade(env: Env) -> Option<WasmUpgradeProposal> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingWasmUpgrade)
     }
 
     // ── Issue #624: Timelock management functions ─────────────────────────────

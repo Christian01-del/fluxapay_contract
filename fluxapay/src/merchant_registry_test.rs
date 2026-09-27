@@ -367,6 +367,7 @@ fn test_unverified_merchant_cannot_create_payment() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     // This should panic with Unauthorized error
@@ -430,6 +431,7 @@ fn test_verified_merchant_can_create_payment() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     let payment = payment_client.create_payment(&args);
@@ -1359,6 +1361,7 @@ fn test_basic_tier_cap_enforced() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1385,6 +1388,7 @@ fn test_basic_tier_cap_enforced() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     let result = payment_client.try_verify_payment(
@@ -1432,6 +1436,7 @@ fn test_business_tier_no_cap() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1477,6 +1482,7 @@ fn test_volume_resets_next_month() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1506,6 +1512,7 @@ fn test_volume_resets_next_month() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1928,6 +1935,7 @@ fn test_non_whitelisted_payer_rejected() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     assert!(result.is_err(), "Expected PayerNotWhitelisted error");
@@ -1969,6 +1977,7 @@ fn test_whitelisted_payer_accepted() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     assert_eq!(payment.merchant_id, merchant);
