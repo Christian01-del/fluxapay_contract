@@ -193,3 +193,69 @@ fn test_pre_authorize_same_merchant_twice_replaces() {
     let pulled = client.pull_payment(&merchant, &customer, &2_000i128);
     assert_eq!(pulled, 2_000i128);
 }
+
+#[test]
+fn test_create_api_key_within_expiry_is_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+    let merchant = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    let key = client.create_api_key(&merchant, &Some(now + 1_000u64));
+
+    // A key whose expiry is still in the future verifies successfully.
+    assert!(client.verify_api_key(&merchant, &key));
+}
+
+#[test]
+fn test_verify_api_key_rejects_expired_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+    let merchant = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    let key = client.create_api_key(&merchant, &Some(now + 100u64));
+
+    // Advance the ledger past the key's expiry.
+    env.ledger().with_mut(|ledger| ledger.timestamp += 101);
+
+    let result = client.try_verify_api_key(&merchant, &key);
+    assert_eq!(result, Err(Ok(MerchantAuthError::ApiKeyExpired)));
+}
+
+#[test]
+fn test_admin_max_lifetime_rejects_longer_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup(&env);
+    let merchant = Address::generate(&env);
+
+    // Admin enforces a maximum key lifetime of 1 hour.
+    client.set_max_key_lifetime_secs(&admin, &3_600u64);
+
+    let now = env.ledger().timestamp();
+    let result = client.try_create_api_key(&merchant, &Some(now + 7_200u64));
+    assert_eq!(result, Err(Ok(MerchantAuthError::KeyLifetimeExceedsMax)));
+}
+
+#[test]
+fn test_no_expiry_key_rejected_when_past_admin_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup(&env);
+    let merchant = Address::generate(&env);
+
+    // Admin enforces a maximum key lifetime of 1 hour.
+    client.set_max_key_lifetime_secs(&admin, &3_600u64);
+
+    // A key created without an explicit expiry inherits the admin max.
+    let key = client.create_api_key(&merchant, &None);
+
+    // Advance the ledger past the admin-configured maximum lifetime.
+    env.ledger().with_mut(|ledger| ledger.timestamp += 3_601);
+
+    let result = client.try_verify_api_key(&merchant, &key);
+    assert_eq!(result, Err(Ok(MerchantAuthError::ApiKeyExpired)));
+}
