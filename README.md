@@ -316,6 +316,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 
 ## Handsoff notes
 
+<!-- handsoff-issue-794 -->
+- #794: feat: add get_payment_summary view — single call returning payment + all refunds + stream info
 <!-- handsoff-issue-791 -->
 - #791: feat: on-chain merchant score decay — reduce score over time if no new payments are confirmed
 <!-- handsoff-issue-805 -->
