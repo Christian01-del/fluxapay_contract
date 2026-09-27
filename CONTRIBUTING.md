@@ -225,19 +225,33 @@ Before marking a PR ready for review:
 
 ### Changelog Format
 
+Every user-facing PR **must** update [`CHANGELOG.md`](CHANGELOG.md) under the
+`## Unreleased` section, **or** carry the `skip-changelog` label (CI/CD, docs-only,
+or internal refactors with no user-facing impact).
+
+The [changelog-check](.github/workflows/changelog-check.yml) workflow:
+
+1. Fails the PR if `CHANGELOG.md` was not touched and the PR lacks `skip-changelog`.
+2. Allows a full bypass when the PR is labelled `skip-changelog`.
+3. When `CHANGELOG.md` is updated, requires the Unreleased section to contain at
+   least one bullet entry that references this PR number (e.g. `PR #123`).
+
 Follow [Keep a Changelog](https://keepachangelog.com/) categories:
 
 ```markdown
 ## Unreleased
 
 ### Added
-- `get_role_members` and `has_role` exposed on `PaymentProcessor` and `RefundManager` ABI
+- **Issue #831 / PR #123**: Multi-payee payment streams with proportional withdraw.
 
 ### Fixed
-- `payment_id` format validation now enforces 3–64 alphanumeric/-/_ characters
+- **PR #123**: `payment_id` format validation now enforces 3–64 alphanumeric/-/_ characters.
 ```
 
 Use the `skip-changelog` label only for CI/CD, docs, or internal refactors with no user-facing impact.
+
+After opening your PR, add the PR number to the Unreleased bullet (CI will fail
+until the entry references `#<pr-number>`).
 
 ---
 

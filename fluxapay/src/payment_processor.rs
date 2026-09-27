@@ -4829,6 +4829,49 @@ impl PaymentProcessor {
         )
     }
 
+    /// Issue #831: Create a multi-payee stream. Shares must sum to 10_000 bps;
+    /// at most 10 payees. Existing single-payee `create_stream` is unchanged.
+    pub fn create_multi_stream(
+        env: Env,
+        sender: Address,
+        token: Address,
+        deposit: i128,
+        rate_per_second: i128,
+        payees: Vec<crate::PayeeAllocation>,
+    ) -> Result<String, StreamError> {
+        if Self::is_blacklisted_address(&env, &sender) {
+            return Err(StreamError::Unauthorized);
+        }
+        for i in 0..payees.len() {
+            let payee = payees.get(i).unwrap();
+            if Self::is_blacklisted_address(&env, &payee.address) {
+                return Err(StreamError::Unauthorized);
+            }
+        }
+        PaymentStreaming::create_multi_stream(
+            env,
+            sender,
+            token,
+            deposit,
+            rate_per_second,
+            payees,
+        )
+    }
+
+    /// Issue #831: Withdraw accrued funds from a multi-payee stream and
+    /// distribute proportionally to all payees atomically.
+    pub fn withdraw_multi_stream(env: Env, stream_id: String) -> Result<(), StreamError> {
+        PaymentStreaming::withdraw_multi_stream(env, stream_id)
+    }
+
+    /// Issue #831: Read a multi-payee stream by ID.
+    pub fn get_multi_stream(
+        env: Env,
+        stream_id: String,
+    ) -> Result<crate::MultiPaymentStream, StreamError> {
+        PaymentStreaming::get_multi_stream(env, stream_id)
+    }
+
     pub fn top_up_stream(
         env: Env,
         caller: Address,

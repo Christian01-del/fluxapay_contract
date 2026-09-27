@@ -8,6 +8,26 @@ Official TypeScript SDK for interacting with FluxaPay's Soroban smart contracts 
 npm install @fluxapay/sdk
 ```
 
+### Browser vs Node.js
+
+| Environment | Import | Notes |
+|-------------|--------|-------|
+| Browser / bundlers | `import { FluxapayClient } from "@fluxapay/sdk"` | Uses the default build; relies on the runtime `fetch`. |
+| Node.js 18+ (scripts, daemons, backends) | `import { FluxapayClient } from "@fluxapay/sdk/node"` | Applies Node-friendly Stellar SDK defaults (`setAllowHttp`, native `fetch`). No caller-side polyfill needed. |
+
+```typescript
+// Node.js
+import { FluxapayClient } from "@fluxapay/sdk/node";
+
+const client = new FluxapayClient({
+  network: "testnet",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  contractId: "C...",
+});
+```
+
+The browser import path is unchanged and unaffected by the `/node` entry.
+
 ## Release Notes
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.

@@ -1855,6 +1855,17 @@ impl RefundManager {
             .set(&dispute_count_key, &new_dispute_count);
         Self::bump_ttl(env, &dispute_count_key, LONG_LIVE_TTL);
 
+        // Issue #833: Cross-call MerchantRegistry so KYC scoring sees the dispute.
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+        }
+
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
         let payment_count: u64 = env
             .storage()
