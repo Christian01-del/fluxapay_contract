@@ -351,6 +351,8 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Payment link does not exist or belongs to a different merchant.
+    InvalidPaymentLink = 70,
 }
 
 #[contracttype]

@@ -895,7 +895,7 @@ proptest! {
 
         // Determinism: hashing the same id yields identical key
         let key1_again = payment_id_to_key(&env, &s1);
-        prop_assert_eq!(key1, key1_again);
+        prop_assert_eq!(key1.clone(), key1_again);
 
         // Collision resistance: distinct IDs must produce distinct keys
         if id1 != id2 {

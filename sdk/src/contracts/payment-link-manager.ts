@@ -87,6 +87,8 @@ export interface CreateLinkParams {
   linkId?: string;
   currency?: string;
   description?: string;
+  /** Optional maximum number of redemptions allowed for this link */
+  maxUses?: number;
 }
 
 /**
@@ -179,7 +181,7 @@ export class PaymentLinkManagerClient {
         currency: params.currency ?? "USDC",
         description: params.description ?? "",
         expires_at: undefined,
-        max_uses: undefined,
+        max_uses: params.maxUses,
         direct_transfer: false,
         usdc_token: params.usdcToken,
         metadata: params.metadata,

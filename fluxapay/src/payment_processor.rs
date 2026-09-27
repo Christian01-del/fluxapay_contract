@@ -5299,6 +5299,23 @@ impl PaymentProcessor {
         Ok(merchants_processed)
     }
 
+    pub fn set_payment_link_manager(env: Env, admin: Address, plm_address: Address) -> Result<(), Error> {
+        admin.require_auth();
+        if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
+            return Err(Error::Unauthorized);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::PaymentLinkManagerAddress, &plm_address);
+        Ok(())
+    }
+
+    pub fn get_payment_link_manager(env: Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PaymentLinkManagerAddress)
+    }
+
     pub fn create_invoice(
         env: Env,
         merchant_id: Address,
@@ -5307,11 +5324,30 @@ impl PaymentProcessor {
         total_amount: i128,
         currency: Symbol,
         due_date: u64,
+        payment_link_id: Option<String>,
     ) -> Result<String, Error> {
         merchant_id.require_auth();
 
         if total_amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        if let Some(ref link_id) = payment_link_id {
+            if let Some(plm_address) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::PaymentLinkManagerAddress)
+            {
+                let plm_client = crate::payment_link::PaymentLinkManagerClient::new(&env, &plm_address);
+                match plm_client.try_get_link(link_id) {
+                    Ok(Ok(link)) => {
+                        if link.merchant_id != merchant_id {
+                            return Err(Error::InvalidPaymentLink);
+                        }
+                    }
+                    _ => return Err(Error::InvalidPaymentLink),
+                }
+            }
         }
 
         let invoice_id = Self::get_next_invoice_id(&env);
@@ -5326,7 +5362,7 @@ impl PaymentProcessor {
             currency,
             due_date,
             status: InvoiceStatus::Created,
-            payment_link_id: None,
+            payment_link_id,
             created_at: now,
         };
 
