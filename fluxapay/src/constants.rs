@@ -28,6 +28,10 @@ pub const DEFAULT_DISPUTE_DEADLINE_THRESHOLD_AMOUNT: i128 = 1_000_000_000;
 pub const SMALL_DISPUTE_DEADLINE_SECS: u64 = 3 * 24 * 60 * 60;
 pub const LARGE_DISPUTE_DEADLINE_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Issue #797: Window (in ledger seconds) a merchant has to respond to a
+/// pending dispute before it can be auto-resolved in the customer's favour.
+pub const MERCHANT_RESPONSE_WINDOW: u64 = 72 * 60 * 60;
+
 // Issue #167: Tiered refund fees based on merchant KYC tier
 pub const REFUND_FEE_BPS_BASIC: i128 = 100; // 1.0% for Basic tier
 pub const REFUND_FEE_BPS_FULL: i128 = 80; // 0.8% for Full tier
@@ -57,6 +61,9 @@ pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
 pub const MAX_REASON_LEN: usize = 256;
 pub const MAX_EVIDENCE_LEN: usize = 512;
 pub const MAX_NOTES_LEN: usize = 512;
+/// Issue #801: Maximum length of a merchant-supplied payment memo, matching
+/// the Stellar memo text limit (140 bytes).
+pub const MAX_MEMO_LEN: usize = 140;
 pub(crate) const ZERO_CONTRACT_STRKEY: &str =
     "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
 
@@ -91,3 +98,27 @@ pub const INITIAL_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Default timelock delay for critical admin operations: 48 hours.
 pub const DEFAULT_TIMELOCK_SECS: u64 = 48 * 60 * 60;
+
+/// Issue #822: Default maximum lifetime for delegated merchant API keys
+/// (90 days in seconds). Used when the admin has not configured an explicit
+/// `max_key_lifetime_secs` via `set_max_key_lifetime_secs`.
+pub const DEFAULT_MAX_API_KEY_LIFETIME_SECS: u64 = 90 * 24 * 60 * 60;
+
+/// Issue #823: Maximum number of tags a payment may carry.
+pub const MAX_PAYMENT_TAGS: u32 = 10;
+/// Issue #823: Maximum length (in bytes) of a single payment tag.
+pub const MAX_TAG_LEN: u32 = 32;
+
+/// Issue #825: Maximum number of milestones a payment stream may define.
+pub const MAX_STREAM_MILESTONES: u32 = 20;
+/// Issue #825: Maximum length (in bytes) of a milestone evidence hash.
+pub const MAX_MILESTONE_EVIDENCE_LEN: u32 = 64;
+// Issue #804: On-chain fee split — configurable revenue share between the
+// FluxaPay platform and merchant affiliates/resellers.
+/// Maximum number of affiliate `FeeRecipient` entries a merchant may register.
+pub const MAX_FEE_RECIPIENTS: u32 = 3;
+/// Maximum total affiliate share (in basis points) across all recipients.
+/// 5000 bps = 50%; the remaining share always goes to the platform treasury.
+pub const MAX_AFFILIATE_BPS: u32 = 5_000;
+/// Denominator for basis-point math (100% = 10_000 bps).
+pub const BPS_DENOMINATOR: u32 = 10_000;

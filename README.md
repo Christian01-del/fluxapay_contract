@@ -313,3 +313,16 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 ## Telegram link
 
 <https://t.me/+m23gN14007w0ZmQ0>
+
+## Handsoff notes
+
+<!-- handsoff-issue-824 -->
+- #824: docs: document the full payment lifecycle state diagram with Mermaid chart in architecture.md
+<!-- handsoff-issue-794 -->
+- #794: feat: add get_payment_summary view — single call returning payment + all refunds + stream info
+<!-- handsoff-issue-791 -->
+- #791: feat: on-chain merchant score decay — reduce score over time if no new payments are confirmed
+<!-- handsoff-issue-805 -->
+- #805: bug: merchant_registry_test.rs tests share a single Soroban test environment, causing test order dependency
+<!-- handsoff-issue-826 -->
+- #826: bug: refund_manager.rs process_refund deducts 1% fee from the refund amount but does not update the treasury balance atomically
