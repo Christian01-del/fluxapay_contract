@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { Networks } from "@stellar/stellar-sdk";
 import { createAuthRouter } from "./routes/auth";
+import { createSettlementRouter } from "./routes/settlements";
 
 /**
  * Issue #675: FluxaPay backend — currently exposes the SEP-10 merchant
@@ -9,6 +10,8 @@ import { createAuthRouter } from "./routes/auth";
  *
  * Issue #803: also exposes payment link analytics
  * (`GET /v1/payment-links/:id/stats`).
+ * Issue #828: also exposes the SEP-6/SEP-24 anchor off-ramp settlement
+ * endpoints (`/settlements`) used to automate merchant fiat settlement.
  */
 
 const app = express();
@@ -72,6 +75,13 @@ app.get("/v1/payment-links/:id/stats", (req, res) => {
     conversion_rate: conversionRate,
   });
 });
+app.use(
+  "/settlements",
+  createSettlementRouter({
+    networkPassphrase: NETWORK_PASSPHRASE,
+    homeDomain: HOME_DOMAIN,
+  }),
+);
 
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
