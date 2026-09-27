@@ -14,7 +14,26 @@ Operational scripts for deployment, SDK generation, local development, and CI ch
 | `generate-sdk.sh` | Generate TypeScript SDK bindings from compiled WASM using `stellar contract bindings typescript`. | None | After contract changes |
 | `sandbox-init.sh` | Bootstrap local Stellar sandbox — builds WASM, generates local identities, funds admin via friendbot. | `STELLAR_RPC_URL`, `STELLAR_NETWORK` | Local dev first-time setup |
 | `check-mainnet-contract-ids.js` | CI informational check — warns when `sdk/src/network-profiles.ts` mainnet still has `UNSET_CONTRACT_ID` placeholders. Always exits 0. | None | CI |
-| `check-error-map-sync.ts` | CI gate — verifies `FLUXAPAY_CONTRACT_ERROR_MAP` in `sdk/src/index.ts` matches the `Error` enum in `fluxapay/src/lib.rs`. Fails CI on drift. | None | CI |
+| `check-error-map-sync.ts` | CI gate — verifies `FLUXAPAY_CONTRACT_ERROR_MAP` in `sdk/src/index.ts` matches the `Error` enum in `fluxapay/src/lib.rs`. Fails CI (exit 1) on drift **or when an expected source file cannot be found** (the missing path is printed). | None | CI |
+
+## CI Jobs
+
+### `check-error-map-sync`
+
+The `check-error-map-sync` CI job runs `npx tsx scripts/check-error-map-sync.ts` on every
+pull request and push to `main`. It is a **hard gate**: the job fails (non-zero exit)
+when the SDK error map drifts from the contract `Error` enum, and also when any expected
+source file (e.g. `fluxapay/src/lib.rs` or `sdk/src/index.ts`) is missing — the error
+message includes the missing path so the failure is actionable in CI logs.
+
+To reproduce locally:
+
+```bash
+npx tsx scripts/check-error-map-sync.ts
+```
+
+To verify the fail-loud behavior, temporarily rename a source file and re-run — the
+script must exit non-zero and print the missing path.
 
 ## Environment Variables Reference
 

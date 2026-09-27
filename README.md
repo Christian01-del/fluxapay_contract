@@ -313,3 +313,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 ## Telegram link
 
 <https://t.me/+m23gN14007w0ZmQ0>
+
+## Handsoff notes
+
+<!-- handsoff-issue-826 -->
+- #826: bug: refund_manager.rs process_refund deducts 1% fee from the refund amount but does not update the treasury balance atomically
