@@ -316,6 +316,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 
 ## Handsoff notes
 
+<!-- handsoff-issue-824 -->
+- #824: docs: document the full payment lifecycle state diagram with Mermaid chart in architecture.md
 <!-- handsoff-issue-794 -->
 - #794: feat: add get_payment_summary view — single call returning payment + all refunds + stream info
 <!-- handsoff-issue-791 -->
