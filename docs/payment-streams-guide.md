@@ -156,6 +156,8 @@ net = amount - fee
 
 ### Top up
 
+Only the original stream `sender` may add funds to a stream. `top_up_deposit` calls `env.require_auth(&stream.sender)`, so any call from a different address fails with an authorization error. This prevents a third party from forcibly extending a stream (or draining a custodial wallet) without the sender's consent.
+
 The sender may add more funds to an active stream:
 
 ```typescript
@@ -163,6 +165,8 @@ await client.topUpStream("G_SENDER...", "stream_001", 500_000n);
 ```
 
 This adds more deposit without altering the rate. The extra deposit is transferred from the sender into the contract and emits `STREAM/TOPPED_UP`.
+
+If a third party needs to fund a stream on the sender's behalf, they must use `top_up_on_behalf`, which requires explicit authorization from the stream `sender` (the sender signs the authorization even though the caller supplies the funds). A call without that sender authorization is rejected.
 
 ### Decrease a rate
 
@@ -231,61 +235,4 @@ This ensures the receiver keeps what has already been earned while the sender ge
 3. Require milestone approval before sending payouts for contractor-heavy work.
 4. Keep a rate floor via `min_rate_per_second` so a stream cannot be throttled below a business-safe minimum.
 5. Monitor accrual and balance changes through the contract state and emitted stream events.
-6. Top up before depletion if you want continuity; otherwise the stream becomes `Exhausted`.
-
-### Event coverage
-
-The stream contract emits these high-value events:
-
-- `STREAM/CREATED`
-- `STREAM/DESTINATION_SET`
-- `STREAM/MILESTONE_APPROVED`
-- `STREAM/MILESTONE_REVOKED`
-- `STREAM/RATE_DECREASED`
-- `STREAM/WITHDRAWN`
-- `STREAM/TOPPED_UP`
-- `STREAM/CANCELLED`
-- `STREAM/PAUSED`
-- `STREAM/RESUMED`
-- `STREAM/RATE_UPDATED`
-
-These are the primary signals for dashboards, webhooks, or off-chain settlement systems.
-
----
-
-## 7) Example end-to-end flow
-
-```typescript
-const stream = await client.createStream({
-  sender: "G_SENDER...",
-  receiver: "G_RECEIVER...",
-  token: "C_USDC_TOKEN...",
-  ratePerSecond: 100n,
-  deposit: 5_000_000n,
-  streamId: "project_milestone_001",
-});
-
-await client.setStreamDestination("G_RECEIVER...", "project_milestone_001", "G_DESTINATION...");
-await client.approveStreamMilestone("G_SENDER...", "project_milestone_001");
-
-await client.withdrawStream("G_RECEIVER...", "project_milestone_001");
-
-await client.topUpStream("G_SENDER...", "project_milestone_001", 1_000_000n);
-await client.updateStreamRate("G_SENDER...", "project_milestone_001", 80n);
-
-await client.pauseStream("G_SENDER...", "project_milestone_001");
-await client.resumeStream("G_SENDER...", "project_milestone_001");
-
-await client.cancelStream("G_SENDER...", "project_milestone_001");
-```
-
-This pattern is well suited for milestone-driven payouts, contractor work, and payroll schedules where the total payout is known up front but the actual release should happen over time.
-
----
-
-## 8) Related docs
-
-- [events.md](events.md) for the event catalog
-- [subscription-guide.md](subscription-guide.md) for recurring billing plans
-- [dispute-resolution-guide.md](dispute-resolution-guide.md) for dispute handling
-- [../sdk/README.md](../sdk/README.md) for SDK and client examples
+6. Top up

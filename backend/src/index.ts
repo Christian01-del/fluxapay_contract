@@ -2,12 +2,15 @@ import "dotenv/config";
 import express from "express";
 import { Networks } from "@stellar/stellar-sdk";
 import { createAuthRouter } from "./routes/auth";
+import { createAnalyticsRouter } from "./routes/analytics";
 import { createSettlementRouter } from "./routes/settlements";
 
 /**
  * Issue #675: FluxaPay backend — currently exposes the SEP-10 merchant
  * authentication endpoints (`/auth/challenge`, `/auth/token`).
  *
+ * Issue #789: adds the merchant dashboard analytics endpoint
+ * (`GET /v1/analytics/revenue`) with daily/weekly/monthly breakdown.
  * Issue #803: also exposes payment link analytics
  * (`GET /v1/payment-links/:id/stats`).
  * Issue #828: also exposes the SEP-6/SEP-24 anchor off-ramp settlement
@@ -39,6 +42,10 @@ app.use(
   }),
 );
 
+app.use(
+  "/v1/analytics",
+  createAnalyticsRouter({
+    serverPublicKey: SERVER_PUBLIC_KEY,
 /**
  * Issue #803: payment link analytics.
  *

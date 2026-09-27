@@ -1,3 +1,12 @@
+# FluxaPay Deployment Scripts
+
+## `deploy.sh`
+
+Deploys all six FluxaPay contracts to a Stellar network in dependency order,
+initialises each contract with the deployer as admin, and writes the resulting
+contract IDs to `.env.testnet`.
+
+### Usage
 # Scripts
 
 Operational scripts for deployment, SDK generation, local development, and CI checks.
@@ -112,28 +121,48 @@ script must exit non-zero and print the missing path.
 All scripts should be executed from the repository root:
 
 ```bash
-# Deploy to testnet
-STELLAR_SECRET_KEY=S... STELLAR_NETWORK=testnet bash scripts/deploy-testnet.sh
-
-# Fund accounts
-npx node scripts/fund-accounts.js GXXXXXX GYYYYYY
-
-# Generate SDK bindings
-bash scripts/generate-sdk.sh
-
-# Bootstrap local sandbox
-bash scripts/sandbox-init.sh
-
-# Start subscription daemon
-CONTRACT_ID=... OPERATOR_SECRET=S... node scripts/subscription-daemon.js
-
-# Start the FX oracle updater (one cycle)
-ORACLE_SECRET=S... FX_ORACLE_CONTRACT_ID=C... node scripts/fx-oracle-updater.js --once
-
-# Start the FX oracle updater (long-running, every 60s)
-ORACLE_SECRET=S... FX_ORACLE_CONTRACT_ID=C... node scripts/fx-oracle-updater.js
-
-# CI checks (run automatically in CI, or manually)
-npx tsx scripts/check-error-map-sync.ts
-node scripts/check-mainnet-contract-ids.js
+./deploy.sh [network]
 ```
+
+The network may be supplied as an optional positional argument or via the
+`STELLAR_NETWORK` environment variable. The positional argument takes
+precedence over the environment variable. When neither is provided the network
+defaults to `testnet`.
+
+Accepted networks: `testnet` | `futurenet` | `standalone`.
+
+### Examples
+
+```bash
+# Deploy to testnet (default)
+./deploy.sh testnet
+
+# Deploy to futurenet via the environment variable
+STELLAR_NETWORK=futurenet ./deploy.sh
+
+# Deploy to a standalone sandbox
+./deploy.sh standalone
+
+# Seed test data after deploy
+SEED_DATA=true ./deploy.sh testnet
+
+# Skip the cargo build step
+SKIP_BUILD=true ./deploy.sh testnet
+```
+
+An unknown network value prints usage and exits non-zero.
+
+### Environment variables
+
+| Variable            | Required | Description                                              |
+| ------------------- | -------- | -------------------------------------------------------- |
+| `STELLAR_SECRET_KEY`| yes      | Deployer secret key (starts with `S`)                    |
+| `STELLAR_NETWORK`   | no       | Target network (`testnet` \| `futurenet` \| `standalone`)|
+| `STELLAR_RPC_URL`   | no       | Override the RPC endpoint                                |
+| `SEED_DATA`         | no       | Set to `true` to seed test data after deploy             |
+| `SKIP_BUILD`        | no       | Set to `true` to skip the cargo build step               |
+
+## `deploy-testnet.sh`
+
+Deprecated. Kept for backward compatibility; it prints a warning and delegates
+to `deploy.sh`, defaulting to `testnet` when no network is supplied.
