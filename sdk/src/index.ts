@@ -101,6 +101,11 @@ export interface FluxapayConfig {
    * when invoice methods are used.
    */
   apiUrl?: string;
+  /**
+   * Issue #840: Base URL of the FluxaPay indexer API used for reconciliation
+   * CSV downloads. Falls back to `apiUrl` when omitted.
+   */
+  indexerUrl?: string;
 }
 
 /**
@@ -171,6 +176,16 @@ export interface CreatePaymentParams {
    * codes.
    */
   feeWaiverCode?: string;
+  /**
+   * Issue #841: Optional muxed payer as a Stellar M-address string.
+   * Decoded to the underlying G-address + 64-bit sub-account ID. When set,
+   * `verify_payment` only confirms if the incoming muxed ID matches.
+   */
+  muxedPayer?: string;
+  /**
+   * Issue #841: Optional muxed sub-account ID directly (alternative to `muxedPayer`).
+   */
+  payerMuxedId?: bigint;
 }
 
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
@@ -561,6 +576,7 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   67: "InputTooLong",
   68: "TimelockNotExpired",
   69: "InvalidEvidenceCid",
+  70: "MuxedAccountMismatch",
   404: "PaymentNotFound",
   405: "RefundNotFound",
   406: "InvalidAmount",
@@ -718,6 +734,11 @@ export async function withMappedContractError<T>(
 }
 
 function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
+  let payerMuxedId: bigint | undefined = params.payerMuxedId;
+  if (params.muxedPayer) {
+    const decoded = decodeMuxedAddress(params.muxedPayer);
+    payerMuxedId = decoded.id;
+  }
   return {
     payment_id: params.paymentId,
     merchant_id: params.merchantId,
@@ -733,6 +754,63 @@ function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
     metadata_hash: undefined,
     metadata: params.metadata,
     fee_waiver_code: params.feeWaiverCode,
+    payer_muxed_id: payerMuxedId,
+  };
+}
+
+/**
+ * Issue #841: Encode a G-address + sub-account ID into a Stellar M-address.
+ */
+export function encodeMuxedAddress(gAddress: string, id: bigint | number | string): string {
+  const { StrKey } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
+  if (!gAddress.startsWith("G")) {
+    throw new Error(`encodeMuxedAddress expects a G-address, got: ${gAddress}`);
+  }
+  const pubkey: Buffer = StrKey.decodeEd25519PublicKey(gAddress);
+  const idBuf = Buffer.alloc(8);
+  idBuf.writeBigUInt64BE(BigInt(id));
+  // Muxed account binary: 0x00 discriminant? Stellar uses 0x60 for muxed med25519 in StrKey.
+  // Prefer SDK encodeMuxedAccount when available.
+  if (typeof (StrKey as any).encodeMuxedAccount === "function") {
+    const payload = Buffer.alloc(40);
+    idBuf.copy(payload, 0);
+    pubkey.copy(payload, 8);
+    return (StrKey as any).encodeMuxedAccount(payload);
+  }
+  // Fallback via MuxedAccount class
+  const { MuxedAccount, Keypair } = require("@stellar/stellar-sdk");
+  const kp = Keypair.fromPublicKey(gAddress);
+  const account = { accountId: () => kp.publicKey() };
+  const muxed = new MuxedAccount(account, String(id));
+  return muxed.accountId();
+}
+
+/**
+ * Issue #841: Decode a Stellar M-address into its G-address and 64-bit sub-account ID.
+ */
+export function decodeMuxedAddress(mAddress: string): { gAddress: string; id: bigint } {
+  if (!mAddress) {
+    throw new Error("Invalid muxed address: empty");
+  }
+  if (mAddress.startsWith("G")) {
+    return { gAddress: mAddress, id: 0n };
+  }
+  if (!mAddress.startsWith("M")) {
+    throw new Error(`Invalid muxed address: ${mAddress}`);
+  }
+  const { StrKey } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
+  if (typeof (StrKey as any).decodeMuxedAccount === "function") {
+    const decoded: Buffer = (StrKey as any).decodeMuxedAccount(mAddress);
+    // decoded is 40 bytes: 8-byte id + 32-byte ed25519 pubkey
+    const id = decoded.readBigUInt64BE(0);
+    const gAddress = StrKey.encodeEd25519PublicKey(decoded.subarray(8, 40));
+    return { gAddress, id };
+  }
+  const { MuxedAccount } = require("@stellar/stellar-sdk");
+  const muxed = MuxedAccount.fromAddress(mAddress, "0");
+  return {
+    gAddress: muxed.baseAccount().accountId(),
+    id: BigInt(muxed.id),
   };
 }
 
@@ -1904,6 +1982,69 @@ export class FluxapayClient {
       );
     }
     return this.config.apiUrl.replace(/\/$/, "");
+  }
+
+  private getIndexerUrl(): string {
+    const url = this.config.indexerUrl || this.config.apiUrl;
+    if (!url) {
+      throw new Error(
+        "indexerUrl (or apiUrl) is required in FluxapayConfig to download reports.",
+      );
+    }
+    return url.replace(/\/$/, "");
+  }
+
+  /**
+   * Issue #840: Download a merchant reconciliation CSV for `[from, to]` and
+   * write it to a Node.js writable stream (e.g. `fs.createWriteStream`).
+   *
+   * Requires a SEP-10 JWT whose `sub` is the merchant account.
+   */
+  async downloadReconciliationReport(params: {
+    from: string;
+    to: string;
+    token: string;
+    /** Node.js Writable stream (or any object with `write`/`end`). */
+    dest: { write: (chunk: string | Buffer) => boolean; end: () => void; once?: (event: string, cb: () => void) => void };
+  }): Promise<void> {
+    const url =
+      `${this.getIndexerUrl()}/v1/reports/reconciliation` +
+      `?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: "text/csv",
+        Authorization: `Bearer ${params.token}`,
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Failed to download reconciliation report: ${res.status} ${body}`,
+      );
+    }
+
+    // Prefer streaming the body when available (Node undici / modern fetch).
+    const body = res.body as any;
+    if (body && typeof body.getReader === "function") {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+        if (!params.dest.write(chunk) && params.dest.once) {
+          await new Promise<void>((resolve) => params.dest.once!("drain", resolve));
+        }
+      }
+      params.dest.end();
+      return;
+    }
+
+    const text = await res.text();
+    params.dest.write(text);
+    params.dest.end();
   }
 
   /**

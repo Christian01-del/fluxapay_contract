@@ -229,6 +229,87 @@ export function createServer(
     }
   });
 
+  // Issue #840: GET /v1/reports/reconciliation?from=&to=
+  // Merchant-authenticated CSV download of payments, refunds, and settlements.
+  // Large reports are streamed via a PostgreSQL cursor (not buffered in memory).
+  const reconciliationQuerySchema = z.object({
+    from: isoDateString,
+    to: isoDateString,
+  });
+
+  const reconciliationHandler = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = reconciliationQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid query parameters", details: parsed.error.flatten() });
+        return;
+      }
+
+      const subject = req.auth?.sub;
+      if (!subject) {
+        res.status(401).json({ error: "Missing authenticated subject" });
+        return;
+      }
+
+      const merchantId = subject;
+      const from = new Date(parsed.data.from);
+      const to = new Date(parsed.data.to);
+      if (from > to) {
+        res.status(400).json({ error: "`from` must be on or before `to`" });
+        return;
+      }
+
+      const monthLabel = `${from.getUTCFullYear()}-${String(from.getUTCMonth() + 1).padStart(2, "0")}`;
+      const filename = `reconciliation_${monthLabel}.csv`;
+
+      res.status(200);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+
+      const header =
+        "payment_id,type,amount_usdc,fiat_amount,fiat_currency,status,created_at,settled_at,customer_ref,tags\n";
+      res.write(header);
+
+      const escapeCsv = (value: string): string => {
+        if (value == null) return "";
+        const s = String(value);
+        if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+
+      for await (const row of database.streamReconciliationReport(merchantId, from, to)) {
+        const line = [
+          row.payment_id,
+          row.type,
+          row.amount_usdc,
+          row.fiat_amount,
+          row.fiat_currency,
+          row.status,
+          row.created_at,
+          row.settled_at,
+          row.customer_ref,
+          row.tags,
+        ]
+          .map(escapeCsv)
+          .join(",");
+        if (!res.write(line + "\n")) {
+          await new Promise<void>((resolve) => res.once("drain", resolve));
+        }
+      }
+
+      res.end();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // SEP-10 JWT authenticated (merchant subject = merchant_id).
+  app.get(
+    "/v1/reports/reconciliation",
+    requireSEP10Auth(sep10Config),
+    reconciliationHandler,
+  );
+
   // GET /payments/:paymentId
   app.get("/payments/:paymentId", requireScope("read:payments"), async (req: Request, res: Response, next: NextFunction) => {
     try {

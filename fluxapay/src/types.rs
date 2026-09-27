@@ -351,6 +351,22 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
+    MuxedAccountMismatch = 70,
+}
+
+/// Issue #841: Muxed account (M-address) wrapping a G-address and 64-bit sub-account ID.
+///
+/// Stellar muxed accounts virtualise a single G-address into many sub-accounts by
+/// embedding a memo ID in the address. Merchants use this to route customer payments
+/// without managing multiple keypairs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MuxedAccount {
+    /// Underlying G-address (ed25519 public key).
+    pub account: Address,
+    /// 64-bit sub-account / memo ID embedded in the M-address.
+    pub id: u64,
 }
 
 #[contracttype]
@@ -375,7 +391,8 @@ pub struct CreatePaymentArgs {
     pub fee_waiver_code: Option<String>,
     /// Issue #482: Payment ID of the original payment if this is a retry; None if original or not retried.
     pub retry_of_payment_id: Option<String>,
-    /// Issue #484: Muxed account ID from payer M-address; None for G-addresses or on-chain payments.
+    /// Issue #484 / #841: Muxed account ID from payer M-address; None for G-addresses
+    /// or when any payer is accepted. When set, verify/confirm requires a matching ID.
     pub payer_muxed_id: Option<u64>,
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
