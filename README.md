@@ -316,6 +316,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 
 ## Handsoff notes
 
+<!-- handsoff-issue-830 -->
+- #830: feat: add payment overpayment policy — configurable accept / reject / partial-accept for overpaid amounts
 <!-- handsoff-issue-824 -->
 - #824: docs: document the full payment lifecycle state diagram with Mermaid chart in architecture.md
 <!-- handsoff-issue-794 -->
