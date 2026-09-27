@@ -4,6 +4,7 @@ import { Networks } from "@stellar/stellar-sdk";
 import { createAuthRouter } from "./routes/auth";
 import { createAnalyticsRouter } from "./routes/analytics";
 import { createSettlementRouter } from "./routes/settlements";
+import { requireJsonContentType } from "./middleware/requireJsonContentType";
 
 /**
  * Issue #675: FluxaPay backend — currently exposes the SEP-10 merchant
@@ -15,10 +16,13 @@ import { createSettlementRouter } from "./routes/settlements";
  * (`GET /v1/payment-links/:id/stats`).
  * Issue #828: also exposes the SEP-6/SEP-24 anchor off-ramp settlement
  * endpoints (`/settlements`) used to automate merchant fiat settlement.
+ * Issue #838: reject non-JSON Content-Type on mutation endpoints (CSRF).
  */
 
 const app = express();
 app.use(express.json());
+// Issue #838: must run before route handlers so form-posts never reach auth.
+app.use(requireJsonContentType);
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const SERVER_PUBLIC_KEY = process.env.SEP10_SERVER_PUBLIC_KEY;
