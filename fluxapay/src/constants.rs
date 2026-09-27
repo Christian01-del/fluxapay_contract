@@ -23,6 +23,17 @@ pub const SETTLEMENT_WEEKLY_INTERVAL_SECS: u64 = 604_800;
 pub const SETTLEMENT_MIN_AMOUNT: i128 = 1_000_000; // 0.1 USDC (7 decimals)
 /// Fixed dispute bond in the contract's stablecoin denomination.
 pub const DISPUTE_BOND_AMOUNT: i128 = 100_000;
+/// Issue #820: Absolute floor for the dispute bond, in the contract's
+/// stablecoin denomination (1 USDC, 7 decimals). Configurable by admin via
+/// `set_dispute_bond_params`.
+pub const ABSOLUTE_MIN_BOND: i128 = 10_000_000;
+/// Issue #820: Default proportional minimum bond, in basis points of the
+/// disputed payment amount (200 bps = 2%). Configurable by admin via
+/// `set_dispute_bond_params`.
+pub const MIN_BOND_BPS: i128 = 200;
+/// Issue #820: Basis-point denominator used when computing the proportional
+/// minimum dispute bond.
+pub const BPS_DENOMINATOR: i128 = 10_000;
 /// Default threshold separating small and large disputes: 100 USDC (7 decimals).
 pub const DEFAULT_DISPUTE_DEADLINE_THRESHOLD_AMOUNT: i128 = 1_000_000_000;
 pub const SMALL_DISPUTE_DEADLINE_SECS: u64 = 3 * 24 * 60 * 60;
@@ -56,6 +67,13 @@ pub const TIER_UPGRADE_THRESHOLD_BUSINESS: i128 = TIER_CAP_FULL; // $100,000 cum
 pub const SUBSCRIPTION_MAX_RETRIES: u32 = 3;
 /// Spacing between retry attempts in seconds (2 days).
 pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
+
+/// Issue #806: Default cancellation grace period after a successful subscription
+/// charge (24 hours in seconds). Subscribers may cancel within this window and
+/// receive a full refund for the most recent charge.
+pub const GRACE_PERIOD_SECS: u64 = 86_400;
+/// Issue #806: Maximum configurable grace period per plan (3 days in seconds).
+pub const MAX_GRACE_PERIOD_SECS: u64 = 259_200;
 
 // Issue #625: Maximum lengths for user-supplied string fields to prevent ledger bloat.
 pub const MAX_REASON_LEN: usize = 256;
