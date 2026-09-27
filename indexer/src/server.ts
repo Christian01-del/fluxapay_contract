@@ -19,6 +19,7 @@ import {
   WebhookStore,
   type RetentionJobHandle,
 } from "./webhooks";
+import { getCachedRate } from "./fx-rate-cache";
 
 dotenv.config();
 
@@ -38,6 +39,34 @@ export type EventReplayHandler = (
 ) => Promise<{ processed: number; stored: number; total: number }>;
 
 export const MAX_REPLAY_LEDGER_RANGE = 10000;
+
+/** Issue #839: stroops use 7 decimal places for USDC amounts. */
+const USDC_DECIMALS = 7;
+/** Issue #839: default staleness threshold (seconds) for convert preview. */
+const DEFAULT_FX_STALENESS_SECS = Number(process.env.FX_STALENESS_SECS || 300);
+
+/** Issue #839: simple per-IP sliding window rate limiter (60 req/min). */
+const FX_CONVERT_LIMIT = 60;
+const FX_CONVERT_WINDOW_MS = 60_000;
+const fxConvertHits = new Map<string, number[]>();
+
+function fxConvertRateLimit(req: Request, res: Response, next: NextFunction): void {
+  const ip = (req.ip || req.socket.remoteAddress || "unknown").toString();
+  const now = Date.now();
+  const windowStart = now - FX_CONVERT_WINDOW_MS;
+  const recent = (fxConvertHits.get(ip) || []).filter((t) => t > windowStart);
+  if (recent.length >= FX_CONVERT_LIMIT) {
+    res.status(429).json({ error: "Rate limit exceeded: 60 requests per minute" });
+    return;
+  }
+  recent.push(now);
+  fxConvertHits.set(ip, recent);
+  next();
+}
+
+function formatFixed(n: number, decimals: number): string {
+  return n.toFixed(decimals);
+}
 
 // Issue #785: query schema for the filtered payments endpoint.
 const isoDateString = z
@@ -105,6 +134,54 @@ export function createServer(
     } catch (error: any) {
       res.status(503).json({ status: "unhealthy", database: "disconnected", error: error.message || String(error) });
     }
+  });
+
+  // Issue #839: public currency conversion preview (cached oracle rate, no auth).
+  // Rate-limited to 60 req/min per IP. Must stay before the API-key gate.
+  app.get("/v1/fx/convert", fxConvertRateLimit, (req: Request, res: Response) => {
+    const from = typeof req.query.from === "string" ? req.query.from.toUpperCase() : "";
+    const to = typeof req.query.to === "string" ? req.query.to.toUpperCase() : "";
+    const amountRaw = typeof req.query.amount === "string" ? req.query.amount : "";
+
+    if (!from || !to || !amountRaw) {
+      res.status(400).json({ error: "Query params from, to, and amount are required" });
+      return;
+    }
+
+    let amountStroops: bigint;
+    try {
+      amountStroops = BigInt(amountRaw);
+    } catch {
+      res.status(400).json({ error: "amount must be an integer stroop count" });
+      return;
+    }
+    if (amountStroops < 0n) {
+      res.status(400).json({ error: "amount must be non-negative" });
+      return;
+    }
+
+    const cached = getCachedRate(from, to);
+    if (!cached) {
+      res.status(404).json({ error: `No cached rate for ${from}/${to}` });
+      return;
+    }
+
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const rateAgeSecs = Math.max(0, nowSecs - cached.updatedAt);
+    const stale = rateAgeSecs > DEFAULT_FX_STALENESS_SECS;
+
+    const amountUsdc = Number(amountStroops) / 10 ** USDC_DECIMALS;
+    const amountFiat = amountUsdc * cached.rate;
+
+    res.status(200).json({
+      from,
+      to,
+      amount_usdc: formatFixed(amountUsdc, 2),
+      amount_fiat: formatFixed(amountFiat, 2),
+      rate: formatFixed(cached.rate, 2),
+      rate_age_secs: rateAgeSecs,
+      stale,
+    });
   });
 
   // Issue #855: Real-time event streaming via Server-Sent Events (SSE)

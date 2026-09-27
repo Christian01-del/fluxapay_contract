@@ -6,6 +6,7 @@
 
 import { Pool } from "pg";
 import { AnyEvent } from "./types";
+import { setCachedRate } from "./fx-rate-cache";
 
 export interface DLQRecord {
   id: number;
@@ -89,6 +90,9 @@ export class Database {
 
       // Store in type-specific table
       await this.storeTypedEvent(table, event, client);
+
+      // Issue #839: keep an in-memory FX rate cache for /v1/fx/convert.
+      this.updateFxRateCache(event);
 
       await client.query("COMMIT");
       return true;
@@ -310,6 +314,21 @@ export class Database {
       INVOICE: "invoices",
     };
     return tableMap[eventType] || "contract_events";
+  }
+
+  /**
+   * Issue #839: Mirror oracle rate events into the in-memory convert cache.
+   * Accepts both `FX_ORACLE` and `ORACLE` topic prefixes and pair formats
+   * like `USDC/NGN` or `USDC_NGN`.
+   */
+  private updateFxRateCache(event: AnyEvent): void {
+    const [eventType] = event.topic;
+    if (eventType !== "FX_ORACLE" && eventType !== "ORACLE") return;
+    const value = event.value as { asset?: string; pair?: string; rate?: number };
+    const rawPair = (value.asset || value.pair || "").toString();
+    if (!rawPair || typeof value.rate !== "number" || !Number.isFinite(value.rate)) return;
+    const pair = rawPair.replace("/", "_").toUpperCase();
+    setCachedRate(pair, value.rate, event.timestamp || Math.floor(Date.now() / 1000));
   }
 
   // ── Read queries (Issue #616 REST API Backing Queries) ─────────────────
