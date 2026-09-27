@@ -8663,9 +8663,11 @@ impl PaymentProcessor {
                         0
                     };
 
+                    let tip = payment.tip_amount.unwrap_or(0);
                     let summary = PaymentSummary {
                         payment_id: payment.payment_id.clone(),
                         amount: payment.amount,
+                        tip_amount: tip,
                         fee,
                         refund_amount,
                         status: payment.status.clone(),
@@ -8673,7 +8675,7 @@ impl PaymentProcessor {
                     };
 
                     payments_in_period.push_back(summary.clone());
-                    total_gross += payment.amount;
+                    total_gross += payment.amount.saturating_add(tip);
                     total_fees += fee;
                     total_refunds += refund_amount;
                 }
