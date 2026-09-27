@@ -67,6 +67,10 @@ pub const TIER_UPGRADE_THRESHOLD_BUSINESS: i128 = TIER_CAP_FULL; // $100,000 cum
 pub const SUBSCRIPTION_MAX_RETRIES: u32 = 3;
 /// Spacing between retry attempts in seconds (2 days).
 pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
+/// Issue #836: Maximum allowed free-trial length for a subscription plan (days).
+pub const MAX_TRIAL_DAYS: u32 = 90;
+/// Issue #836: Seconds in one trial day (ledger time).
+pub const TRIAL_DAY_SECS: u64 = 86_400;
 
 /// Issue #806: Default cancellation grace period after a successful subscription
 /// charge (24 hours in seconds). Subscribers may cancel within this window and

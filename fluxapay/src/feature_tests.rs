@@ -256,6 +256,7 @@ fn create_and_deactivate_subscription_plan_emit_events() {
         &1_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
     assert!(
         events_contain(&env, "SUBSCRIPTION", "PLAN_CREATED"),

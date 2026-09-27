@@ -101,6 +101,11 @@ export interface FluxapayConfig {
    * when invoice methods are used.
    */
   apiUrl?: string;
+  /**
+   * Issue #839: Base URL of the FluxaPay indexer API. Used by
+   * `convertCurrency`. Falls back to `apiUrl` when unset.
+   */
+  indexerUrl?: string;
 }
 
 /**
@@ -223,6 +228,8 @@ export interface SubscriptionPlan {
   intervalSecs: bigint;
   billingInterval: "Daily" | "Weekly" | "Monthly" | "Annually";
   active: boolean;
+  /** Issue #836: optional free-trial length in days (max 90). */
+  trialDays?: number | null;
 }
 
 /** Mirrors the on-chain `Subscription` struct in `fluxapay/src/types.rs`. */
@@ -245,6 +252,8 @@ export interface Subscription {
   resumeAt: bigint | null;
   affiliate: string | null;
   affiliateFeeBps: number | null;
+  /** Issue #836: ledger timestamp when free trial ends, if any. */
+  trialEndsAt?: bigint | null;
 }
 
 export interface CreatePlanParams {
@@ -255,6 +264,8 @@ export interface CreatePlanParams {
   amount: bigint;
   currency: string;
   billingInterval: SubscriptionPlan["billingInterval"];
+  /** Issue #836: optional free-trial length in days (max 90). */
+  trialDays?: number;
 }
 
 export interface SubscribeParams {
@@ -284,6 +295,7 @@ function fromContractSubscription(raw: {
   resume_at?: bigint | null;
   affiliate?: string | null;
   affiliate_fee_bps?: number | null;
+  trial_ends_at?: bigint | null;
 }): Subscription {
   return {
     subscriptionId: raw.subscription_id,
@@ -304,6 +316,7 @@ function fromContractSubscription(raw: {
     resumeAt: raw.resume_at ?? null,
     affiliate: raw.affiliate ?? null,
     affiliateFeeBps: raw.affiliate_fee_bps ?? null,
+    trialEndsAt: raw.trial_ends_at ?? null,
   };
 }
 
@@ -561,6 +574,8 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   67: "InputTooLong",
   68: "TimelockNotExpired",
   69: "InvalidEvidenceCid",
+  70: "TrialActive",
+  71: "TrialTooLong",
   404: "PaymentNotFound",
   405: "RefundNotFound",
   406: "InvalidAmount",
@@ -1907,6 +1922,53 @@ export class FluxapayClient {
   }
 
   /**
+   * Issue #839: Resolve the indexer base URL for public FX preview calls.
+   */
+  private getIndexerUrl(): string {
+    const base = this.config.indexerUrl || this.config.apiUrl;
+    if (!base) {
+      throw new Error(
+        "indexerUrl (or apiUrl) is required in FluxapayConfig to use convertCurrency.",
+      );
+    }
+    return base.replace(/\/$/, "");
+  }
+
+  /**
+   * Issue #839: Preview a USDC→fiat conversion at the indexer's cached
+   * oracle rate without creating a payment.
+   *
+   * @param params.from - Source currency (typically "USDC")
+   * @param params.to - Destination fiat currency (e.g. "NGN")
+   * @param params.amount - Amount in stroops (7 decimal places)
+   */
+  async convertCurrency(params: {
+    from: string;
+    to: string;
+    amount: bigint | string | number;
+  }): Promise<{
+    from: string;
+    to: string;
+    amount_usdc: string;
+    amount_fiat: string;
+    rate: string;
+    rate_age_secs: number;
+    stale: boolean;
+  }> {
+    const qs = new URLSearchParams({
+      from: params.from,
+      to: params.to,
+      amount: params.amount.toString(),
+    });
+    const res = await fetch(`${this.getIndexerUrl()}/v1/fx/convert?${qs}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`convertCurrency failed (${res.status}): ${body}`);
+    }
+    return res.json();
+  }
+
+  /**
    * Issue #680: Fetch a single invoice by id from the FluxaPay backend.
    */
   async getInvoice(invoiceId: string): Promise<Invoice> {
@@ -2196,6 +2258,7 @@ export class FluxapayClient {
         amount: params.amount,
         currency: params.currency,
         billing_interval: billingIntervalMap[params.billingInterval] ?? 2,
+        trial_days: params.trialDays ?? null,
       }),
     );
     return params.planId;
@@ -2226,6 +2289,7 @@ export class FluxapayClient {
       intervalSecs: p.interval_secs,
       billingInterval: billingIntervalLabels[p.billing_interval] ?? "Monthly",
       active: p.active,
+      trialDays: p.trial_days ?? null,
     };
   }
 
