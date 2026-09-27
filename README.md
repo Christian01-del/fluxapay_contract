@@ -316,6 +316,8 @@ Operational scripts for deployment, SDK generation, and CI: [scripts/README.md](
 
 ## Handsoff notes
 
+<!-- handsoff-issue-791 -->
+- #791: feat: on-chain merchant score decay — reduce score over time if no new payments are confirmed
 <!-- handsoff-issue-805 -->
 - #805: bug: merchant_registry_test.rs tests share a single Soroban test environment, causing test order dependency
 <!-- handsoff-issue-826 -->
