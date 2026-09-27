@@ -803,6 +803,48 @@ impl PaymentLinkManager {
         Ok(())
     }
 
+    /// Admin or merchant can update max_uses on an existing link (only increase, not decrease below use_count).
+    pub fn update_link_max_uses(
+        env: Env,
+        caller: Address,
+        link_id: String,
+        new_max_uses: u32,
+    ) -> Result<(), crate::Error> {
+        caller.require_auth();
+
+        let mut link = Self::get_link_internal(&env, &link_id)?;
+
+        let is_merchant = link.merchant_id == caller;
+        let stored_admin: Option<Address> = env.storage().persistent().get(&LinkDataKey::LinkAdmin);
+        let is_admin = stored_admin.map(|a| a == caller).unwrap_or(false);
+
+        if !is_merchant && !is_admin {
+            return Err(crate::Error::Unauthorized);
+        }
+
+        if new_max_uses < link.use_count {
+            return Err(crate::Error::InvalidAmount);
+        }
+
+        if let Some(current_max) = link.max_uses {
+            if new_max_uses < current_max {
+                return Err(crate::Error::InvalidAmount);
+            }
+        }
+
+        link.max_uses = Some(new_max_uses);
+        env.storage()
+            .persistent()
+            .set(&LinkDataKey::Link(link_id.clone()), &link);
+
+        env.events().publish(
+            (Symbol::new(&env, "LINK"), Symbol::new(&env, "MAX_USES_UPDATED")),
+            (link_id, new_max_uses),
+        );
+
+        Ok(())
+    }
+
     /// Permissionless entry point that deactivates an expired payment link.
     /// If the link has not expired or is already inactive, the call is idempotent
     /// (succeeds without changing state). Emits LINK/EXPIRED on actual deactivation.

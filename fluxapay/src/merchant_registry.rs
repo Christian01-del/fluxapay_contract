@@ -1010,7 +1010,7 @@ impl MerchantRegistry {
 
         let mut merchant = Self::get_merchant_internal(&env, &merchant_id)?;
         merchant.active = false;
-        merchant.suspension_reason = Some(reason);
+        merchant.suspension_reason = Some(reason.clone());
         merchant.suspended_at = Some(env.ledger().timestamp());
         merchant.suspension_expires_at = Some(env.ledger().timestamp() + expiration_duration);
 

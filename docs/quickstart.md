@@ -119,6 +119,7 @@ const { linkId, shareableUrl, qrCodeData } = await client.createPaymentLink({
   merchant: "GABC...MERCHANT_ADDRESS",
   amount: 10_000_000n,
   usdcToken: process.env.USDC_TOKEN_ADDRESS!,
+  maxUses: 1, // Optional cap on total redemptions (e.g., single-use promo)
 });
 
 console.log(`Send this link to your customer: ${shareableUrl}`);

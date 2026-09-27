@@ -1769,3 +1769,72 @@ fn test_link_analytics_last_used_at_tracking() {
     assert!(analytics_after.last_used_at.is_some());
     assert!(analytics_after.last_used_at.unwrap() >= initial_timestamp);
 }
+
+#[test]
+fn test_single_use_link_max_uses() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (merchant, client) = setup_payment_link(&env);
+    let payer = Address::generate(&env);
+
+    let link_id = String::from_str(&env, "promo_link");
+    client.create_link(
+        &merchant,
+        &link_id,
+        &Some(100i128),
+        &Symbol::new(&env, "USDC"),
+        &String::from_str(&env, "Promo"),
+        &None,
+        &Some(1),
+        &false,
+        &None,
+        &MaybeFiatConfig::None,
+        &None,
+    );
+
+    // First use should succeed
+    let res1 = client.try_use_link(&payer, &link_id, &100i128, &None);
+    assert!(res1.is_ok());
+
+    // Second use should fail with LinkMaxUsesReached (#59)
+    let res2 = client.try_use_link(&payer, &link_id, &100i128, &None);
+    assert_eq!(res2.err(), Some(Ok(crate::Error::LinkMaxUsesReached)));
+}
+
+#[test]
+fn test_update_link_max_uses() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (merchant, client) = setup_payment_link(&env);
+    let payer = Address::generate(&env);
+
+    let link_id = String::from_str(&env, "updatable_link");
+    client.create_link(
+        &merchant,
+        &link_id,
+        &Some(100i128),
+        &Symbol::new(&env, "USDC"),
+        &String::from_str(&env, "Updatable"),
+        &None,
+        &Some(1),
+        &false,
+        &None,
+        &MaybeFiatConfig::None,
+        &None,
+    );
+
+    // First use
+    client.use_link(&payer, &link_id, &100i128, &None);
+
+    // Second use fails
+    let res = client.try_use_link(&payer, &link_id, &100i128, &None);
+    assert_eq!(res.err(), Some(Ok(crate::Error::LinkMaxUsesReached)));
+
+    // Merchant updates max_uses to 2
+    client.update_link_max_uses(&merchant, &link_id, &2);
+
+    // Now second use succeeds
+    let res_after = client.try_use_link(&payer, &link_id, &100i128, &None);
+    assert!(res_after.is_ok());
+}
+

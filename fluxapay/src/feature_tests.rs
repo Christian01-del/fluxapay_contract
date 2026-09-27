@@ -413,6 +413,7 @@ fn test_invoice_overdue_grace_period() {
         &100i128,
         &Symbol::new(&env, "USDC"),
         &due_date,
+        &None,
     );
 
     // Before due date -> Created status
@@ -473,6 +474,7 @@ fn test_invoice_lifecycle_events() {
         &500i128,
         &Symbol::new(&env, "USDC"),
         &due_date,
+        &None,
     );
 
     // Verify INVOICE/CREATED event emission
