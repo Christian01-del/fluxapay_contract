@@ -61,6 +61,9 @@ pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
 pub const MAX_REASON_LEN: usize = 256;
 pub const MAX_EVIDENCE_LEN: usize = 512;
 pub const MAX_NOTES_LEN: usize = 512;
+/// Issue #801: Maximum length of a merchant-supplied payment memo, matching
+/// the Stellar memo text limit (140 bytes).
+pub const MAX_MEMO_LEN: usize = 140;
 pub(crate) const ZERO_CONTRACT_STRKEY: &str =
     "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
 
@@ -95,3 +98,13 @@ pub const INITIAL_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Default timelock delay for critical admin operations: 48 hours.
 pub const DEFAULT_TIMELOCK_SECS: u64 = 48 * 60 * 60;
+
+// Issue #804: On-chain fee split — configurable revenue share between the
+// FluxaPay platform and merchant affiliates/resellers.
+/// Maximum number of affiliate `FeeRecipient` entries a merchant may register.
+pub const MAX_FEE_RECIPIENTS: u32 = 3;
+/// Maximum total affiliate share (in basis points) across all recipients.
+/// 5000 bps = 50%; the remaining share always goes to the platform treasury.
+pub const MAX_AFFILIATE_BPS: u32 = 5_000;
+/// Denominator for basis-point math (100% = 10_000 bps).
+pub const BPS_DENOMINATOR: u32 = 10_000;

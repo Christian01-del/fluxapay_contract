@@ -6,6 +6,7 @@
 
 import express, { type Request, type Response, type NextFunction } from "express";
 import * as dotenv from "dotenv";
+import { z } from "zod";
 import { Database } from "./database";
 import { requireApiKey, requireAdminApiKey } from "./auth/api-key";
 import { requireApiKey, requireScope } from "./auth/api-key";
@@ -37,6 +38,52 @@ export type EventReplayHandler = (
 ) => Promise<{ processed: number; stored: number; total: number }>;
 
 export const MAX_REPLAY_LEDGER_RANGE = 10000;
+
+// Issue #785: query schema for the filtered payments endpoint.
+const isoDateString = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), { message: "Invalid ISO-8601 date" });
+
+const paymentsQuerySchema = z.object({
+  merchant_id: z.string().min(1).max(128),
+  status: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : undefined,
+    ),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  cursor: z.string().max(512).optional(),
+});
+
+/**
+ * Decode an opaque pagination cursor of the form base64url(created_at|id).
+ * Returns null when the cursor is malformed so the caller can reject it.
+ */
+function decodePaymentsCursor(cursor: string): { createdAt: string; id: string } | null {
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const separator = decoded.lastIndexOf("|");
+    if (separator <= 0) return null;
+    const createdAt = decoded.slice(0, separator);
+    const id = decoded.slice(separator + 1);
+    if (!createdAt || !id) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
+function encodePaymentsCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`, "utf8").toString("base64url");
+}
 
 export function createServer(
   database: Database,
@@ -119,6 +166,67 @@ export function createServer(
       typeof req.header("x-merchant-id") === "string"
         ? (req.header("x-merchant-id") as string)
         : null,
+  });
+
+  // Issue #785: GET /v1/payments?merchant_id=&status=&from=&to=&limit=&cursor=
+  // Filtered, cursor-paginated payments query. The merchant_id filter is
+  // authorized against the SEP-10 JWT subject so a requester can only query
+  // their own merchant (admins may query any merchant).
+  app.get("/v1/payments", requireScope("read:payments"), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = paymentsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid query parameters", details: parsed.error.flatten() });
+        return;
+      }
+
+      const { merchant_id, status, from, to, limit, cursor } = parsed.data;
+
+      // Authorization: the SEP-10 JWT subject must match the requested merchant.
+      const subject = req.auth?.sub;
+      if (!subject) {
+        res.status(401).json({ error: "Missing authenticated subject" });
+        return;
+      }
+      if (subject !== merchant_id && !sep10Config.adminAccounts.has(subject)) {
+        res.status(403).json({ error: "Token is not authorized for this merchant" });
+        return;
+      }
+
+      let decodedCursor: { createdAt: string; id: string } | null = null;
+      if (cursor) {
+        decodedCursor = decodePaymentsCursor(cursor);
+        if (!decodedCursor) {
+          res.status(400).json({ error: "Invalid cursor" });
+          return;
+        }
+      }
+
+      const result = await database.getPaymentsFiltered({
+        merchantId: merchant_id,
+        statuses: status,
+        from,
+        to,
+        limit,
+        cursor: decodedCursor ?? undefined,
+      });
+
+      const nextCursor =
+        result.payments.length === limit && result.payments.length > 0
+          ? encodePaymentsCursor(
+              String(result.payments[result.payments.length - 1].created_at),
+              String(result.payments[result.payments.length - 1].id),
+            )
+          : null;
+
+      res.status(200).json({
+        data: result.payments,
+        next_cursor: nextCursor,
+        total: result.total,
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   // GET /payments/:paymentId
@@ -222,101 +330,6 @@ export function createServer(
     }
   });
 
-  // POST /admin/replay?from_ledger=N&to_ledger=M - Re-process contract events from a ledger range via SSE stream
-  app.post("/admin/replay", requireAdminApiKey, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const fromParam = req.query.from_ledger ?? req.query.from ?? req.body?.from_ledger ?? req.body?.from;
-      const toParam = req.query.to_ledger ?? req.query.to ?? req.body?.to_ledger ?? req.body?.to;
+  // POST /admin/r
 
-      const fromLedger = parseInt(fromParam as string, 10);
-      const toLedger = parseInt(toParam as string, 10);
-
-      if (isNaN(fromLedger) || isNaN(toLedger) || fromLedger < 1 || toLedger < fromLedger) {
-        res.status(400).json({
-          error: "Invalid ledger parameters: 'from_ledger' and 'to_ledger' must be positive integers with from_ledger <= to_ledger",
-        });
-        return;
-      }
-
-      if (toLedger - fromLedger > MAX_REPLAY_LEDGER_RANGE) {
-        res.status(400).json({
-          error: `Requested ledger range (${toLedger - fromLedger + 1}) exceeds maximum allowed limit of ${MAX_REPLAY_LEDGER_RANGE} ledgers`,
-        });
-        return;
-      }
-
-      if (!eventReplayHandler) {
-        res.status(501).json({ error: "Event replay handler not configured on server" });
-        return;
-      }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders?.();
-
-      let isClientConnected = true;
-      req.on("close", () => {
-        isClientConnected = false;
-      });
-
-      const onProgress = (progress: ReplayProgressUpdate) => {
-        if (!isClientConnected) return;
-        res.write(`data: ${JSON.stringify({ processed: progress.processed, total: progress.total, stored: progress.stored })}\n\n`);
-      };
-
-      const result = await eventReplayHandler(fromLedger, toLedger, onProgress);
-      if (isClientConnected) {
-        res.write(`data: ${JSON.stringify({ type: "complete", processed: result.processed, total: result.total, stored: result.stored })}\n\n`);
-        res.end();
-      }
-    } catch (error: any) {
-      if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: error.message || String(error) })}\n\n`);
-        res.end();
-      } else {
-        next(error);
-      }
-    }
-  });
-
-  // Global Error Handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("API Request Error:", err);
-    res.status(500).json({ error: "Internal Server Error" });
-  });
-
-  return app;
-}
-
-export async function startServer(
-  database: Database,
-  port = parseInt(process.env.PORT || process.env.INDEXER_API_PORT || "3001", 10),
-  replayDlqHandler?: ReplayDLQHandler,
-  eventReplayHandler?: EventReplayHandler,
-) {
-  const app = createServer(database, replayDlqHandler, eventReplayHandler);
-  const server = app.listen(port, () => {
-    console.log(`Indexer REST API listening on port ${port}`);
-  });
-  return server;
-}
-
-async function main(): Promise<void> {
-  const dbConnectionString =
-    process.env.DATABASE_URL ||
-    "postgres://postgres:password@localhost:5432/fluxapay";
-  const port = parseInt(process.env.PORT || process.env.INDEXER_API_PORT || "3001", 10);
-
-  const database = new Database(dbConnectionString);
-  await database.initialize();
-
-  await startServer(database, port);
-}
-
-if (require.main === module) {
-  main().catch((error) => {
-    console.error("Fatal error starting indexer API:", error);
-    process.exit(1);
-  });
-}
+/* … truncated 3514 chars — edit only what you need near the top … */
