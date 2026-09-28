@@ -59,6 +59,7 @@ fn integration_payment_args(
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -117,6 +118,52 @@ fn test_create_payment_with_verified_registry_merchant_succeeds() {
     let payment =
         payment_client.create_payment(&integration_payment_args(&env, "REG_VERIFIED", &merchant));
     assert_eq!(payment.status, PaymentStatus::Pending);
+}
+
+#[test]
+fn test_replay_cannot_overwrite_confirmed_payment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, payment_client, _, _) = setup_integration(&env);
+    let merchant = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let customer = Address::generate(&env);
+    let payment_id = String::from_str(&env, "REPLAY_CONFIRMED");
+    let amount = 1000i128;
+
+    payment_client.grant_role(&admin, &Symbol::new(&env, "MERCHANT"), &merchant);
+    payment_client.grant_role(&admin, &Symbol::new(&env, "ORACLE"), &oracle);
+
+    let mut args = integration_payment_args(&env, "REPLAY_CONFIRMED", &merchant);
+    payment_client.create_payment(&args);
+    payment_client.verify_payment(
+        &oracle,
+        &payment_id,
+        &BytesN::<32>::random(&env),
+        &customer,
+        &amount,
+        &None::<u64>,
+    );
+
+    let confirmed_before = payment_client.get_payment(&payment_id);
+    assert_eq!(confirmed_before.status, PaymentStatus::Confirmed);
+
+    args.amount = 1;
+    let replay = payment_client.try_create_payment(&args);
+
+    assert_eq!(replay, Err(Ok(Error::PaymentAlreadyExists)));
+    let after_replay = payment_client.get_payment(&payment_id);
+    assert_eq!(after_replay.amount, confirmed_before.amount);
+    assert_eq!(
+        after_replay.amount_received,
+        confirmed_before.amount_received
+    );
+    assert_eq!(
+        after_replay.transaction_hash,
+        confirmed_before.transaction_hash
+    );
+    assert_eq!(after_replay.confirmed_at, confirmed_before.confirmed_at);
+    assert_eq!(after_replay.status, PaymentStatus::Confirmed);
 }
 
 #[test]
@@ -236,6 +283,7 @@ fn test_happy_path_flow() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -317,6 +365,7 @@ fn test_settlement_path() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -374,6 +423,7 @@ fn test_failure_and_expiration_path() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -502,6 +552,7 @@ fn test_upgrade_contract_storage_compatibility() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -551,6 +602,7 @@ fn test_prune_expired_payments_expired_pending() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -599,6 +651,7 @@ fn test_prune_expired_payments_non_expired_skipped() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -646,6 +699,7 @@ fn test_prune_expired_payments_non_pending_skipped() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -750,6 +804,7 @@ fn test_settle_payment_with_zero_merchant_fee() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -825,6 +880,7 @@ fn test_settle_payment_with_bps_only_fee() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -900,6 +956,7 @@ fn test_settle_payment_with_fixed_fee() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -975,6 +1032,7 @@ fn test_settle_payment_with_combined_fee() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1036,6 +1094,7 @@ fn test_settle_payment_no_registry_configured() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1118,6 +1177,7 @@ fn test_cross_contract_happy_path() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1197,6 +1257,7 @@ fn test_cross_contract_unverified_merchant_rejection() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1255,6 +1316,7 @@ fn test_cross_contract_suspended_merchant_rejection() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1305,6 +1367,7 @@ fn test_cross_contract_registry_not_set_regression() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
             tip_enabled: false,
@@ -1389,6 +1452,7 @@ fn setup_dispute(
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,

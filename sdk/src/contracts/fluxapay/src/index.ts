@@ -63,6 +63,7 @@ export interface CreatePaymentArgs {
   memo_type: Option<string>;
   token_address: Option<string>;
   client_token: Option<string>;
+  idempotency_key: Option<string>;
   metadata_hash: Option<Buffer>;
   /**
    * Optional payment metadata.

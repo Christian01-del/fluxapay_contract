@@ -1,6 +1,67 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+pub const PAYMENT_TOLERANCE: i128 = 1;
+const SHORT_LIVE_TTL: u32 = 120_960; // ~1 week at 5s/ledger
+const LONG_LIVE_TTL: u32 = 18_921_600; // ~3 years at 5s/ledger
+const TTL_BUMP_THRESHOLD_DIVISOR: u32 = 5;
+const CREATE_PAYMENT_WINDOW_SECS: u64 = 60;
+const CREATE_PAYMENT_MAX_PER_WINDOW: u32 = 30;
+pub const DEFAULT_PAYMENT_DURATION_SECS: u64 = 3_600;
+const REFUND_FEE_BPS: i128 = 100;
+/// Cooldown period after payment confirmation before refunds can be requested (5 minutes in seconds).
+const REFUND_COOLDOWN_SECS: u64 = 300;
+/// Default refund request expiry period (30 days in seconds).
+const REFUND_EXPIRY_SECS: u64 = 30 * 24 * 60 * 60;
+/// Issue #638: TTL (in ledgers, ~5s each) for a stored refund idempotency key —
+/// 30 days, matching the payment `client_token` retention window.
+const REFUND_IDEMPOTENCY_TTL_LEDGERS: u32 = (30 * 24 * 60 * 60) / 5;
+/// Issue #761: TTL for a payment idempotency key (24 hours at 5s per ledger).
+const PAYMENT_IDEMPOTENCY_TTL_LEDGERS: u32 = (24 * 60 * 60) / 5;
+/// Issue #480: Minimum time between daily settlements (24 hours in seconds).
+const SETTLEMENT_DAILY_INTERVAL_SECS: u64 = 86_400;
+/// Issue #480: Minimum time between weekly settlements (7 days in seconds).
+const SETTLEMENT_WEEKLY_INTERVAL_SECS: u64 = 604_800;
+/// Issue #480: Minimum pending balance required to trigger a settlement.
+const SETTLEMENT_MIN_AMOUNT: i128 = 1_000_000; // 0.1 USDC (7 decimals)
+/// Fixed dispute bond in the contract's stablecoin denomination.
+const DISPUTE_BOND_AMOUNT: i128 = 100_000;
+/// Default threshold separating small and large disputes: 100 USDC (7 decimals).
+pub const DEFAULT_DISPUTE_DEADLINE_THRESHOLD_AMOUNT: i128 = 1_000_000_000;
+pub const SMALL_DISPUTE_DEADLINE_SECS: u64 = 3 * 24 * 60 * 60;
+pub const LARGE_DISPUTE_DEADLINE_SECS: u64 = 7 * 24 * 60 * 60;
+
+// Issue #167: Tiered refund fees based on merchant KYC tier
+const REFUND_FEE_BPS_BASIC: i128 = 100; // 1.0% for Basic tier
+const REFUND_FEE_BPS_FULL: i128 = 80; // 0.8% for Full tier
+const REFUND_FEE_BPS_BUSINESS: i128 = 50; // 0.5% for Business tier
+
+/// Default window (Issue #170) during which a pending refund may be processed,
+/// measured from `Refund::created_at`. Configurable via `set_refund_expiry`.
+pub const DEFAULT_REFUND_EXPIRY_SECS: u64 = 30 * 24 * 60 * 60;
+// Issue #63: Monthly processing volume caps per KYC tier (in USDC stroops, 7 decimals)
+// Unverified: $500, Basic: $10,000, Full: $100,000, Business: unlimited (i128::MAX)
+const TIER_CAP_UNVERIFIED: i128 = 5_000_000_000; // $500
+const TIER_CAP_BASIC: i128 = 100_000_000_000; // $10,000
+const TIER_CAP_FULL: i128 = 1_000_000_000_000; // $100,000
+const TIER_CAP_BUSINESS: i128 = i128::MAX; // unlimited
+
+// Issue #207: Cumulative volume thresholds for automatic KYC tier upgrades (in USDC stroops)
+const TIER_UPGRADE_THRESHOLD_BASIC: i128 = TIER_CAP_UNVERIFIED; // $500 cumulative → Basic
+const TIER_UPGRADE_THRESHOLD_FULL: i128 = TIER_CAP_BASIC; // $10,000 cumulative → Full
+const TIER_UPGRADE_THRESHOLD_BUSINESS: i128 = TIER_CAP_FULL; // $100,000 cumulative → Business
+
+/// Maximum number of payment retries before a subscription is cancelled.
+pub const SUBSCRIPTION_MAX_RETRIES: u32 = 3;
+/// Spacing between retry attempts in seconds (2 days).
+pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
+
+// Issue #625: Maximum lengths for user-supplied string fields to prevent ledger bloat.
+const MAX_REASON_LEN: usize = 256;
+const MAX_EVIDENCE_LEN: usize = 512;
+const MAX_NOTES_LEN: usize = 512;
+pub(crate) const ZERO_CONTRACT_STRKEY: &str =
+    "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
 pub mod constants;
 pub mod data_keys;
 pub mod payment_processor;
@@ -446,6 +507,8 @@ pub struct CreatePaymentArgs {
     pub memo_type: Option<String>,
     pub token_address: Option<Address>,
     pub client_token: Option<String>,
+    /// Optional idempotency key for safely retrying payment creation.
+    pub idempotency_key: Option<String>,
     pub metadata_hash: Option<BytesN<32>>,
     /// Arbitrary key-value metadata (max 20 keys, 256 chars per value).
     pub metadata: Option<Map<String, String>>,
@@ -1146,6 +1209,8 @@ pub enum DataKey {
     PendingTimelockAction(String),
     /// Issue #624: Counter for generating unique pending action IDs.
     TimelockActionCounter,
+    /// Issue #761: payment idempotency key → payment_id with a 24-hour TTL.
+    PaymentIdempotencyKey(String),
 }
 
 /// Default initial contract version string.
@@ -7405,6 +7470,20 @@ impl PaymentProcessor {
         Self::require_not_blacklisted(&env, &args.merchant_id)?;
         Self::require_not_blacklisted(&env, &args.deposit_address)?;
 
+        if let Some(ref key) = args.idempotency_key {
+            if key.len() > 128 {
+                return Err(Error::InputTooLong);
+            }
+            let storage_key = DataKey::PaymentIdempotencyKey(key.clone());
+            if let Some(existing_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&storage_key)
+            {
+                return Self::get_payment_internal(&env, &existing_id);
+            }
+        }
+
         // Idempotency check: if client_token was already used, return the existing payment
         // (or error if it maps to a different payment_id).
         if let Some(ref token) = args.client_token {
@@ -7421,6 +7500,14 @@ impl PaymentProcessor {
         // Verify that the merchant has the MERCHANT role (granted on verification)
         if !AccessControl::has_role(&env, &role_merchant(&env), &args.merchant_id) {
             return Err(Error::Unauthorized);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Payment(args.payment_id.clone()))
+        {
+            return Err(Error::PaymentAlreadyExists);
         }
 
         // Issue #164: Validate token against admin-approved allowlist
@@ -7526,14 +7613,6 @@ impl PaymentProcessor {
                     }
                 }
             }
-        }
-
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Payment(payment_id_to_key(&env, &args.payment_id)))
-        {
-            return Err(Error::PaymentAlreadyExists);
         }
 
         // Issue #489: Validate metadata_hash uniqueness
@@ -7690,6 +7769,14 @@ impl PaymentProcessor {
             let rev_key = DataKey::IdempotencyKey(rev_token_id);
             env.storage().persistent().set(&rev_key, &token);
             Self::bump_ttl(&env, &rev_key, ttl_ledgers);
+        }
+
+        if let Some(key) = args.idempotency_key {
+            let storage_key = DataKey::PaymentIdempotencyKey(key);
+            env.storage()
+                .persistent()
+                .set(&storage_key, &args.payment_id);
+            Self::bump_ttl(&env, &storage_key, PAYMENT_IDEMPOTENCY_TTL_LEDGERS);
         }
 
         Ok(payment)
@@ -10493,6 +10580,7 @@ impl PaymentProcessor {
             memo_type: None,
             token_address: Some(settlement_token),
             client_token: None,
+            idempotency_key: None,
             metadata_hash: None,
             metadata: None,
             fee_waiver_code: None,
@@ -10598,6 +10686,7 @@ impl PaymentProcessor {
             memo_type: None,
             token_address: Some(settlement_token),
             client_token: None,
+            idempotency_key: None,
             metadata_hash: None,
             metadata: None,
             fee_waiver_code: None,

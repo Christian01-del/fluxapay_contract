@@ -113,6 +113,7 @@ fn create_payment_args(
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -2947,6 +2948,7 @@ fn test_create_payment_idempotency_retry_returns_same_payment() {
         memo_type: None,
         token_address: None,
         client_token: client_token.clone(),
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -2989,6 +2991,7 @@ fn test_create_payment_idempotency_different_payment_id_fails() {
         memo_type: None,
         token_address: None,
         client_token: client_token.clone(),
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -3007,6 +3010,81 @@ fn test_create_payment_idempotency_different_payment_id_fails() {
     let result = client.try_create_payment(&args_b);
 
     assert_eq!(result, Err(Ok(Error::DuplicateIdempotencyKey)));
+}
+
+#[test]
+fn test_create_payment_idempotency_key_retry_returns_original_payment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup_payment_processor(&env);
+
+    let merchant_id = Address::generate(&env);
+    client.grant_role(&admin, &role_merchant(&env), &merchant_id);
+
+    let idempotency_key = String::from_str(&env, "retry-key-761");
+    let payment_id = String::from_str(&env, "idem_key_pay_1");
+    let mut first_args = create_payment_args(&env, &payment_id, &merchant_id, 1000);
+    first_args.idempotency_key = Some(idempotency_key.clone());
+    let first = client.create_payment(&first_args);
+
+    let mut retry_args = first_args.clone();
+    retry_args.payment_id = String::from_str(&env, "idem_key_pay_2");
+    retry_args.amount = 1;
+    let retry = client.create_payment(&retry_args);
+
+    assert_eq!(retry.payment_id, first.payment_id);
+    assert_eq!(retry.amount, first.amount);
+    assert!(client.try_get_payment(&retry_args.payment_id).is_err());
+}
+
+#[test]
+fn test_create_payment_idempotency_key_rejects_overlong_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup_payment_processor(&env);
+
+    let merchant_id = Address::generate(&env);
+    client.grant_role(&admin, &role_merchant(&env), &merchant_id);
+
+    let mut args = create_payment_args(
+        &env,
+        &String::from_str(&env, "idem_key_too_long"),
+        &merchant_id,
+        1000,
+    );
+    args.idempotency_key = Some(String::from_str(&env, &"x".repeat(129)));
+
+    assert_eq!(
+        client.try_create_payment(&args),
+        Err(Ok(Error::InputTooLong))
+    );
+}
+
+#[test]
+fn test_create_payment_idempotency_key_reusable_after_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup_payment_processor(&env);
+
+    let merchant_id = Address::generate(&env);
+    client.grant_role(&admin, &role_merchant(&env), &merchant_id);
+
+    let idempotency_key = Some(String::from_str(&env, "retry-key-expiry-761"));
+    let payment_id_1 = String::from_str(&env, "idem_key_expiry_1");
+    let mut first_args = create_payment_args(&env, &payment_id_1, &merchant_id, 1000);
+    first_args.idempotency_key = idempotency_key.clone();
+    client.create_payment(&first_args);
+
+    let sequence = env.ledger().sequence();
+    env.ledger()
+        .set_sequence_number(sequence + PAYMENT_IDEMPOTENCY_TTL_LEDGERS + 1);
+
+    let payment_id_2 = String::from_str(&env, "idem_key_expiry_2");
+    let mut second_args = create_payment_args(&env, &payment_id_2, &merchant_id, 1000);
+    second_args.idempotency_key = idempotency_key;
+    let payment = client.create_payment(&second_args);
+
+    assert_eq!(payment.payment_id, payment_id_2);
 }
 
 #[test]
@@ -3034,6 +3112,7 @@ fn test_create_payment_without_idempotency_token_fails_on_retry() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -3044,10 +3123,15 @@ fn test_create_payment_without_idempotency_token_fails_on_retry() {
 
     client.create_payment(&args);
 
-    // Without a client_token, a second call with the same payment_id returns PaymentAlreadyExists
-    let result = client.try_create_payment(&args);
+    // A different amount must not overwrite the original payment.
+    let mut replay = args.clone();
+    replay.amount = 1;
+    let result = client.try_create_payment(&replay);
 
     assert_eq!(result, Err(Ok(Error::PaymentAlreadyExists)));
+    let stored = client.get_payment(&payment_id);
+    assert_eq!(stored.amount, args.amount);
+    assert_eq!(stored.status, PaymentStatus::Pending);
 }
 
 #[test]
@@ -5644,6 +5728,7 @@ fn test_merchant_payment_count_accurate_after_creates() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5678,6 +5763,7 @@ fn test_create_payment_future_expiry_accepted() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5716,6 +5802,7 @@ fn test_create_payment_current_timestamp_rejected() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5755,6 +5842,7 @@ fn test_create_payment_past_expiry_rejected() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5791,6 +5879,7 @@ fn test_create_payment_duration_min_bound_enforced() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5827,6 +5916,7 @@ fn test_create_payment_duration_max_bound_enforced() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5865,6 +5955,7 @@ fn test_create_payment_valid_duration_within_bounds() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -5942,6 +6033,7 @@ fn test_create_payment_zero_amount_rejected() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -6088,6 +6180,7 @@ fn test_create_payment_negative_amount_rejected() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
@@ -6123,6 +6216,7 @@ fn test_create_payment_minimum_positive_amount_accepted() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,

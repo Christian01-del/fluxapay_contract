@@ -76,8 +76,8 @@ fn test_hard_staleness_cap_despite_high_threshold() {
     let oracle = Address::generate(&env);
     client.oracle_grant_role(&admin, &Symbol::new(&env, "ORACLE"), &oracle);
 
-    // Admin sets a permissive 7-day threshold; hard cap still applies at 24 h.
-    client.set_staleness_threshold(&admin, &(7 * 86_400));
+    // The maximum accepted threshold is 24 hours.
+    client.set_staleness_threshold(&admin, &86_400);
 
     let pair = Symbol::new(&env, "USDC_NGN");
     client.set_rate(&oracle, &pair, &1500i128, &0);
@@ -137,6 +137,40 @@ fn test_update_staleness_threshold() {
 
     client.set_staleness_threshold(&admin, &3600);
     assert_eq!(client.get_staleness_threshold(), 3600);
+}
+
+#[test]
+fn test_staleness_threshold_bounds_are_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup_oracle(&env);
+
+    assert_eq!(
+        client.try_set_max_staleness(&admin, &59),
+        Err(Ok(FXOracleError::InvalidStalenessThreshold))
+    );
+    assert_eq!(
+        client.try_set_max_staleness(&admin, &86_401),
+        Err(Ok(FXOracleError::InvalidStalenessThreshold))
+    );
+    client.set_max_staleness(&admin, &60);
+    assert_eq!(client.get_staleness_threshold(), 60);
+}
+
+#[test]
+fn test_rate_within_configured_staleness_window_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, client) = setup_oracle(&env);
+    let oracle = Address::generate(&env);
+    client.oracle_grant_role(&admin, &Symbol::new(&env, "ORACLE"), &oracle);
+    client.set_max_staleness(&admin, &60);
+
+    let pair = Symbol::new(&env, "USDC_NGN");
+    client.set_rate(&oracle, &pair, &1500i128, &0);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 59);
+
+    assert!(client.try_get_rate(&pair).is_ok());
 }
 
 #[test]
