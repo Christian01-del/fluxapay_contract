@@ -96,6 +96,20 @@ pub const MAX_DISPUTE_BATCH: u32 = 20;
 /// auto-execute a dispute resolution via [`FluxaPayContract::vote_dispute`].
 pub const ARBITRATOR_VOTING_THRESHOLD: u32 = 3;
 
+/// Issue #843: Stake amount that yields one unit of arbitration vote weight
+/// (100 USDC at 7 decimal places). `vote_weight = stake_amount / VOTE_WEIGHT_UNIT`.
+pub const VOTE_WEIGHT_UNIT: i128 = 1_000_000_000;
+/// Issue #843: Minimum stake required to participate in weighted arbitration
+/// voting (must yield at least 1 weight unit).
+pub const MIN_ARBITRATOR_STAKE: i128 = VOTE_WEIGHT_UNIT;
+/// Issue #843: Default weighted quorum in basis points of total registered
+/// stake weight (5100 = 51%). Admin-configurable via `set_weighted_quorum_bps`.
+pub const WEIGHTED_QUORUM_BPS: u32 = 5_100;
+
+/// Issue #846: Default number of ledgers that must elapse between
+/// `propose_upgrade` and `execute_upgrade` (~48h at ~5s/ledger).
+pub const UPGRADE_TIMELOCK_LEDGERS: u32 = 34_560;
+
 /// Maximum number of withdrawal records retained in `TreasuryWithdrawalHistory`.
 pub const TREASURY_WITHDRAWAL_HISTORY_CAP: u32 = 100;
 

@@ -28,7 +28,9 @@ Automated testing and deployment pipeline using GitHub Actions:
 - **CD:** Auto-deploys to development and staging on merge to main; production requires manual approval
 - All tests must pass before deployment
 
-### Security and Dependency Checks (Local)
+### Security and Dependency Checks
+
+Automated in CI workflow (`ci.yml`) and runnable locally:
 
 - `cargo audit --deny warnings`
 - `cargo deny check bans licenses advisories`

@@ -103,6 +103,22 @@ PaymentLinkManager
 
 ## Role Model
 
+Access control uses a fixed **role registry** (`KNOWN_ROLES` in
+`fluxapay/src/access_control.rs`). `grant_role` and `revoke_role` reject any
+`Symbol` not in this list with `AccessControlError::UnknownRole`, preventing
+phantom permissions from typo'd role names.
+
+| Symbol | Constant helper |
+|--------|-----------------|
+| `ADMIN` | `role_admin()` |
+| `ORACLE` | `role_oracle()` |
+| `MERCHANT` | `role_merchant()` |
+| `SETTLEMENT_OPERATOR` | `role_settlement_operator()` |
+| `ARBITRATOR` | `role_arbitrator()` |
+
+When adding a new system role, update `KNOWN_ROLES` first — it is the single
+source of truth.
+
 ### Admin Role
 
 **Permissions:**

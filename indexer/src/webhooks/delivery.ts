@@ -4,6 +4,7 @@ import {
   DELIVERY_ID_HEADER,
   EVENT_TYPE_HEADER,
   SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
 } from "./signing";
 import type { DeliveryAttempt, WebhookEndpoint, WebhookEnvelope } from "./types";
 
@@ -100,7 +101,9 @@ export async function deliverOnce(
           endpoint.signingSecret,
           body,
           Math.floor(startedAt / 1000),
+          endpoint.signingAlgorithm ?? "hmac_sha256",
         ),
+        [TIMESTAMP_HEADER]: String(Math.floor(startedAt / 1000)),
         [EVENT_TYPE_HEADER]: envelope.type,
         [DELIVERY_ID_HEADER]: envelope.id,
       },

@@ -72,6 +72,7 @@ export interface StreamEvent extends ContractEvent {
     recipient?: string;
     amount?: number;
     remaining_deposit?: number;
+    memo?: string | null;
   };
 }
 

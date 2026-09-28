@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **Issue #831**: Multi-payee payment streams — `create_multi_stream` / `withdraw_multi_stream` / `get_multi_stream` with up to 10 weighted payees (`share_bps` must sum to 10_000). Docs in `docs/payment-streams-guide.md`.
+- **Issue #832**: Hardened `changelog-check.yml` — fails without `CHANGELOG.md` updates unless labelled `skip-changelog`; Unreleased entries must reference the PR number. Documented in `CONTRIBUTING.md`.
+- **Issue #833**: `open_dispute` / `create_dispute` cross-calls `MerchantRegistry.increment_merchant_dispute_count`; `get_merchant_dispute_count` returns the live merchant field (lifetime total for KYC — does not decrement on merchant-favour resolution; active counts remain in RefundManager).
+- **Issue #834**: `@fluxapay/sdk/node` subpath export for Node.js 18+ with Stellar SDK HTTP defaults; browser build unchanged.
+
 ### Changed
+- **Payment link max_uses cap**: `create_payment_link` accepts optional `max_uses: Option<u32>`. `use_link` enforces the limit and returns `LinkMaxUsesReached`. `use_count` is incremented atomically. Admin or merchant can call `update_link_max_uses` to raise the cap. SDK `createPaymentLink` exposes `maxUses` option.
+- **Invoice payment link verification**: `create_invoice` cross-calls `PaymentLinkManager.get_link(payment_link_id)` when `payment_link_id` is provided, returning `InvalidPaymentLink` if the link does not exist or belongs to a different merchant.
+- **CI Security Checks**: Added `cargo-deny` and `cargo-audit` jobs to `.github/workflows/ci.yml` running on every PR targeting `main` and documented branch protection requirements in `CONTRIBUTING.md`. Updated `README.md` to remove the "Local only" caveat.
 - **Issue #853**: `DataKey::Payment` switched from holding a `String` to fixed-size `BytesN<32>` (SHA-256 hash of payment ID) via `payment_id_to_key(env, payment_id)`. Reduces Soroban storage rent and CPU costs significantly for high-volume merchants during create, read, and update operations.
   - **Migration Note**: This is an on-chain storage format change. Existing payments stored under the variable-length string key on previous testnet deployments are incompatible and will not be found under the hashed key; contract re-deployment or state migration is required.
 

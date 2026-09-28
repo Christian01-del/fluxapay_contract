@@ -367,6 +367,7 @@ fn test_unverified_merchant_cannot_create_payment() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     // This should panic with Unauthorized error
@@ -430,6 +431,7 @@ fn test_verified_merchant_can_create_payment() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     let payment = payment_client.create_payment(&args);
@@ -1359,6 +1361,7 @@ fn test_basic_tier_cap_enforced() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1385,6 +1388,7 @@ fn test_basic_tier_cap_enforced() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     let result = payment_client.try_verify_payment(
@@ -1432,6 +1436,7 @@ fn test_business_tier_no_cap() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1477,6 +1482,7 @@ fn test_volume_resets_next_month() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1506,6 +1512,7 @@ fn test_volume_resets_next_month() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
     payment_client.verify_payment(
         &oracle,
@@ -1928,6 +1935,7 @@ fn test_non_whitelisted_payer_rejected() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     assert!(result.is_err(), "Expected PayerNotWhitelisted error");
@@ -1969,6 +1977,7 @@ fn test_whitelisted_payer_accepted() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     });
 
     assert_eq!(payment.merchant_id, merchant);
@@ -2007,4 +2016,60 @@ fn test_auto_upgrade_kyc_tier_emits_event() {
 
     let merchant = client.get_merchant(&merchant_id);
     assert_eq!(merchant.kyc_tier, KycTier::Basic);
+}
+
+#[test]
+fn test_list_merchants_page_size_too_large() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MerchantRegistry, ());
+    let client = MerchantRegistryClient::new(&env, &contract_id);
+
+    let res = client.try_list_merchants(&None, &51);
+    assert_eq!(res, Err(Ok(MerchantError::PageSizeTooLarge)));
+}
+
+#[test]
+fn test_list_merchants_pagination_cursor_and_integrity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MerchantRegistry, ());
+    let client = MerchantRegistryClient::new(&env, &contract_id);
+
+    // Register 5 merchants
+    for i in 0..5 {
+        let m_id = Address::generate(&env);
+        let name = String::from_str(&env, "Merchant");
+        let curr = String::from_str(&env, "USDC");
+        client.register_merchant(&m_id, &name, &curr, &None, &None, &MaybeFeeConfig::None);
+    }
+
+    // Page 1: limit 2
+    let page1 = client.list_merchants(&None, &2);
+    assert_eq!(page1.merchants.len(), 2);
+    assert!(page1.next_cursor.is_some());
+
+    // Page 2: limit 2 using next_cursor
+    let page2 = client.list_merchants(&page1.next_cursor, &2);
+    assert_eq!(page2.merchants.len(), 2);
+    assert!(page2.next_cursor.is_some());
+
+    // Page 3: limit 2 using next_cursor
+    let page3 = client.list_merchants(&page2.next_cursor, &2);
+    assert_eq!(page3.merchants.len(), 1);
+    assert!(page3.next_cursor.is_none());
+
+    // Ensure all 5 are distinct
+    let m1_0 = page1.merchants.get(0).unwrap().merchant_id;
+    let m1_1 = page1.merchants.get(1).unwrap().merchant_id;
+    let m2_0 = page2.merchants.get(0).unwrap().merchant_id;
+    let m2_1 = page2.merchants.get(1).unwrap().merchant_id;
+    let m3_0 = page3.merchants.get(0).unwrap().merchant_id;
+
+    assert_ne!(m1_0, m1_1);
+    assert_ne!(m1_1, m2_0);
+    assert_ne!(m2_0, m2_1);
+    assert_ne!(m2_1, m3_0);
 }

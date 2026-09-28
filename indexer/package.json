@@ -9,7 +9,7 @@
     "start:api": "node dist/server.js",
     "dev:api": "ts-node src/server.ts",
     "build": "tsc",
-    "test": "ts-node test/indexer.test.ts",
+    "test": "ts-node --test test/webhooks.test.ts test/rate-limit.test.ts",
     "migrate": "node dist/migrations/run.js",
     "watch": "tsc --watch"
   },

@@ -242,13 +242,14 @@ export class Database {
 
       case "stream_withdrawals":
         await client.query(
-          `INSERT INTO stream_withdrawals (stream_id, recipient, amount, remaining_deposit, created_at)
-           VALUES ($1, $2, $3, $4, to_timestamp($5))`,
+          `INSERT INTO stream_withdrawals (stream_id, recipient, amount, remaining_deposit, memo, created_at)
+           VALUES ($1, $2, $3, $4, $5, to_timestamp($6))`,
           [
             value.stream_id || (Array.isArray(value) ? value[0] : null),
             value.recipient || value.destination || value.receiver || (Array.isArray(value) ? value[2] || value[1] : null),
             value.amount || value.withdrawable || (Array.isArray(value) ? value[3] : null),
             value.remaining_deposit || (Array.isArray(value) ? value[4] : null),
+            value.memo !== undefined ? value.memo : null,
             event.timestamp,
           ]
         );

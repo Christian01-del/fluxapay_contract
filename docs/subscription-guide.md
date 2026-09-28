@@ -181,6 +181,29 @@ Relevant lifecycle events include:
 
 A failed charge does not silently disappear: merchants should watch for retry and cancellation events so they can notify the customer or prompt for updated payment credentials.
 
+### Daemon RPC Timeout & Retry Handling (Issue #776)
+
+During periods of Stellar network congestion, calls to `charge_subscription` or `process_due_subscriptions` may encounter RPC timeouts while the transaction is awaiting inclusion in a closed ledger. To avoid silently skipping billing cycles:
+
+1. **Retry Queue Persistence**:
+   - On an RPC timeout (or missing transaction receipt within the poll timeout window), the daemon immediately persists the transaction record (`transaction_hash`, `subscription_id`, attempt count, and timestamps) to a local retry queue (`subscription_retry_queue.json`).
+   - The cycle is never marked as a definitive failure or discarded on timeout.
+
+2. **Horizon Status Poller**:
+   - A dedicated poller queries the Horizon endpoint (`GET /transactions/{hash}`) before scheduling a re-submission.
+   - If Horizon reports `successful: true`, the charge was included; the record is removed from the queue and marked successful.
+   - If Horizon returns `404 Not Found` and the ledger close window (~30 seconds) has elapsed, the daemon prepares a re-submission with the same operator keypair and fresh sequence guard.
+
+3. **Exponential Backoff**:
+   - Re-submissions follow exponential backoff: base delay of 1s, doubling per retry (`1s`, `2s`, `4s`).
+   - The daemon allows a maximum of **3 retry attempts** per timeout cycle.
+
+4. **Retry Exhaustion Alerting**:
+   - If all 3 retry attempts are exhausted without confirmation, the daemon:
+     - Emits a `charge.failed` webhook to the configured `WEBHOOK_URL` containing the failure context (`subscription_id`, `transaction_hash`, attempt count, and reason).
+     - Logs a high-priority `ERROR` to system logs for operational intervention.
+     - Removes the failed record from the active retry queue to prevent unbounded retries.
+
 ---
 
 ## 6) Pause and resume

@@ -27,6 +27,8 @@ export function isWebhookEventType(value: string): value is WebhookEventType {
   return (WEBHOOK_EVENT_TYPES as readonly string[]).includes(value);
 }
 
+export type WebhookSigningAlgorithm = "hmac_sha256" | "ed25519";
+
 export interface WebhookEndpoint {
   id: string;
   merchantId: string;
@@ -34,6 +36,7 @@ export interface WebhookEndpoint {
   signingSecret: string;
   eventTypes: string[];
   enabled: boolean;
+  signingAlgorithm?: WebhookSigningAlgorithm;
 }
 
 export interface WebhookEnvelope {
