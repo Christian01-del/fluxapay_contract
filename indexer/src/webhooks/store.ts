@@ -20,11 +20,20 @@ export class WebhookStore {
 
   async getEndpoint(endpointId: string): Promise<WebhookEndpoint | null> {
     const { rows } = await this.pool.query(
-      `SELECT id, merchant_id, url, signing_secret, event_types, enabled
+      `SELECT id, merchant_id, url, signing_secret, event_types, enabled,
+              COALESCE(signing_algorithm, 'hmac_sha256') AS signing_algorithm
          FROM webhook_endpoints
         WHERE id = $1`,
       [endpointId],
-    );
+    ).catch(async () => {
+      // Fallback for tables prior to signing_algorithm column
+      return this.pool.query(
+        `SELECT id, merchant_id, url, signing_secret, event_types, enabled
+           FROM webhook_endpoints
+          WHERE id = $1`,
+        [endpointId],
+      );
+    });
     if (rows.length === 0) return null;
 
     const row = rows[0];
@@ -35,6 +44,7 @@ export class WebhookStore {
       signingSecret: row.signing_secret,
       eventTypes: row.event_types ?? [],
       enabled: row.enabled,
+      signingAlgorithm: (row.signing_algorithm as "hmac_sha256" | "ed25519") ?? "hmac_sha256",
     };
   }
 

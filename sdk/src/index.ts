@@ -36,6 +36,11 @@ import {
 
 export { FLUXAPAY_CONTRACT_IDS, UNSET_CONTRACT_ID } from "./network-profiles.js";
 export type { FluxapayContractIds } from "./network-profiles.js";
+export {
+  verifyWebhookSignature,
+  parseWebhookSignatureHeader,
+  type ParsedWebhookSignature,
+} from "./webhooks.js";
 import { FxOracleClient } from "./contracts/fx-oracle.js";
 import {
   MerchantRegistryClient,
@@ -43,7 +48,9 @@ import {
   type AddCurrencyPayoutParams,
   type CurrencyPayout,
   type BankAccount,
+  type MerchantPage,
 } from "./contracts/merchant-registry.js";
+export type { MerchantPage };
 import {
   PaymentLinkManagerClient,
   type PaymentLinkManagerConfig,
@@ -1492,6 +1499,71 @@ export class FluxapayClient {
         disputer: params.disputer,
       }),
     );
+  }
+
+  /**
+   * Open a dispute with on-chain SHA-256 evidence hash verification (Issue #773).
+   * Accepts an optional evidenceHash (hex string, auto-decoded to 32 bytes).
+   */
+  async openDispute(params: {
+    paymentId: string | number;
+    amount: bigint | number;
+    reason?: string;
+    evidence?: string;
+    disputer?: string;
+    opener?: string;
+    evidenceHash?: string | Buffer | Uint8Array;
+    bondAmount?: bigint | number;
+  }) {
+    let hashBuf: Buffer;
+    if (params.evidenceHash) {
+      if (typeof params.evidenceHash === "string") {
+        hashBuf = Buffer.from(params.evidenceHash.replace(/^0x/, ""), "hex");
+      } else {
+        hashBuf = Buffer.from(params.evidenceHash);
+      }
+    } else {
+      const { createHash } = await import("node:crypto");
+      hashBuf = createHash("sha256").update(params.evidence ?? "").digest();
+    }
+
+    if (hashBuf.length !== 32) {
+      throw new Error(`evidenceHash must be 32 bytes (got ${hashBuf.length})`);
+    }
+
+    const caller = params.disputer || params.opener || "";
+    return withMappedContractError(async () => {
+      if (typeof (this.contract as any).open_dispute === "function") {
+        return (this.contract as any).open_dispute({
+          opener: caller,
+          payment_id: typeof params.paymentId === "number" ? BigInt(params.paymentId) : params.paymentId,
+          disputed_amount: BigInt(params.amount),
+          bond_amount: BigInt(params.bondAmount ?? 0),
+          evidence_hash: hashBuf,
+        });
+      }
+      return this.contract.create_dispute({
+        payment_id: String(params.paymentId),
+        amount: BigInt(params.amount),
+        reason: params.reason ?? "",
+        evidence: params.evidence ?? "",
+        disputer: caller,
+        evidence_hash: hashBuf,
+      });
+    });
+  }
+
+  /**
+   * Read-only view function to retrieve the stored SHA-256 evidence hash for a dispute (Issue #773).
+   */
+  async verifyEvidence(disputeId: string | number): Promise<string> {
+    return withMappedContractError(async () => {
+      const res = await (this.contract as any).verify_evidence({
+        dispute_id: typeof disputeId === "number" ? BigInt(disputeId) : disputeId,
+      });
+      const val = (res as { result?: any }).result ?? res;
+      return Buffer.from(val).toString("hex");
+    });
   }
 
   /**

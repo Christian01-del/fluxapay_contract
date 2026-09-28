@@ -12,10 +12,12 @@ import {
   WebhookStore,
 } from "./store";
 import { isWebhookEventType, WEBHOOK_EVENT_TYPES } from "./types";
+import { getPlatformEd25519PublicKey } from "./signing";
 
 /**
- * Webhook HTTP surface (Issues #808, #810).
+ * Webhook HTTP surface (Issues #775, #808, #810).
  *
+ * `GET  /webhooks/public-key`                  — Ed25519 active public key (#775)
  * `POST /v1/webhooks/test`                      — synthetic delivery (#808)
  * `GET  /v1/webhooks/:endpointId/deliveries`    — delivery history  (#810)
  */
@@ -35,6 +37,19 @@ function error(res: Response, status: number, code: string, message: string) {
 export function registerWebhookRoutes(app: Express, deps: WebhookRouteDeps): void {
   const { store, merchantIdFromRequest } = deps;
   const doFetch = deps.fetch ?? (globalThis.fetch as unknown as FetchLike);
+
+  // ── GET /webhooks/public-key (Issue #775) ───────────────────────────────
+  const getPublicKeyHandler = (_req: Request, res: Response) => {
+    const publicKey = getPlatformEd25519PublicKey();
+    return res.status(200).json({
+      algorithm: "ed25519",
+      public_key: publicKey,
+      publicKey: publicKey,
+    });
+  };
+
+  app.get("/webhooks/public-key", getPublicKeyHandler);
+  app.get("/v1/webhooks/public-key", getPublicKeyHandler);
 
   /**
    * Resolve an endpoint and confirm the caller owns it.

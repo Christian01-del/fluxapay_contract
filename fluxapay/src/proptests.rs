@@ -904,5 +904,51 @@ proptest! {
             prop_assert_eq!(key1, key2);
         }
     }
+
+    /// Issue #772: Accrual across many pause/resume cycles exhibits no negative drift.
+    #[test]
+    fn proptest_stream_pause_resume_many_cycles_no_drift(
+        rate in 1i128..=10_000,
+        cycles in 1usize..=100,
+        active_step in 1u64..=100,
+        pause_step in 1u64..=500,
+    ) {
+        use crate::stream::compute_total_accrued;
+
+        let deposit = i128::MAX / 4;
+        let mut baseline_accrued = 0i128;
+        let mut last_checkpoint = 1000u64;
+        let mut current_time = 1000u64;
+        let mut total_active_elapsed = 0u64;
+
+        for _ in 0..cycles {
+            // Active period
+            current_time = current_time.saturating_add(active_step);
+            total_active_elapsed = total_active_elapsed.saturating_add(active_step);
+
+            // Snapshot at pause
+            let accrued_at_pause = compute_total_accrued(
+                baseline_accrued,
+                last_checkpoint,
+                current_time,
+                rate,
+                deposit,
+            );
+            prop_assert!(
+                accrued_at_pause >= baseline_accrued,
+                "Accrual drifted negatively at pause"
+            );
+
+            // Paused interval: time passes, no accrual happens
+            current_time = current_time.saturating_add(pause_step);
+
+            // Resume carries accrued_at_pause forward as new baseline
+            baseline_accrued = accrued_at_pause;
+            last_checkpoint = current_time;
+        }
+
+        let expected_total = (total_active_elapsed as i128).saturating_mul(rate);
+        prop_assert_eq!(baseline_accrued, expected_total);
+    }
 }
 
