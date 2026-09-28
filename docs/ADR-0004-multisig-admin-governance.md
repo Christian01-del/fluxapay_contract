@@ -91,6 +91,30 @@ These cover the highest-risk runtime configuration changes: pause state, token a
 
 The multi-sig proposal path is not used for every admin operation. In the current implementation, direct admin-auth or timelocked actions such as contract upgrades and treasury withdrawals remain outside the `AdminAction` proposal list and follow their own execution flow. This keeps the governance surface explicit and prevents the proposal system from becoming a catch-all for unrelated privileged actions.
 
+## Two-Step Time-Locked Admin Ownership Transfer (Issue #764)
+
+To prevent instant privilege escalation in the event of an admin key compromise, direct one-transaction admin assignment (`set_admin`) has been completely replaced with a time-locked two-step ownership transfer:
+
+1. **`propose_admin(new_admin: Address)`**:
+   - Authorized only by the active admin (`role_admin`).
+   - Persists `PendingAdminTransfer` containing `(new_admin, earliest_acceptance_ledger)`.
+   - The earliest acceptance ledger is enforced as `current_ledger + MIN_TIMELOCK_LEDGERS`, where `MIN_TIMELOCK_LEDGERS = 17_280` ledgers (~24 hours / 1 day delay based on ~5-second ledger close times).
+   - Emits an `ACCESS_CONTROL / ADMIN_TRANSFER_PROPOSED` event providing on-chain visibility to stakeholders and monitoring services.
+
+2. **`accept_admin()`**:
+   - Must be called by `new_admin` and requires their explicit signature authorization.
+   - Enforces two mandatory invariants, panicking if violated:
+     - The caller must strictly match the stored pending admin address.
+     - The current ledger sequence must be `>= earliest_acceptance_ledger`.
+   - Upon successful execution, grants `role_admin` to `new_admin`, revokes it from the prior admin, updates `DataKey::Admin`, clears the proposal, and emits `ACCESS_CONTROL / ADMIN_TRANSFER_COMPLETED`.
+
+3. **`cancel_admin_transfer()`**:
+   - Callable by the current admin at any point during the timelock window.
+   - Immediately purges `PendingAdminTransfer`, neutralizing unauthorized or mistaken proposals.
+   - Emits an `ACCESS_CONTROL / ADMIN_TRANSFER_CANCELLED` event.
+
+This two-step model ensures that even if an admin key is compromised, attackers cannot instantly hijack the contract; the legitimate community or multisig has a mandatory 24-hour review window to detect the proposed transfer and cancel it.
+
 ## Alternatives considered
 
 ### 1. Timelock only

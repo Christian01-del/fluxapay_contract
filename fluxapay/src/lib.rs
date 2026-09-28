@@ -1507,6 +1507,15 @@ impl RefundManager {
         AccessControl::claim_admin(&env, new_admin).map_err(|_| Error::AccessControlError)
     }
 
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        AccessControl::accept_admin(&env, new_admin).map_err(|_| Error::AccessControlError)
+    }
+
+    pub fn cancel_admin_transfer(env: Env, current_admin: Address) -> Result<(), Error> {
+        AccessControl::cancel_admin_transfer(&env, current_admin)
+            .map_err(|_| Error::AccessControlError)
+    }
+
     pub fn transfer_admin(
         env: Env,
         current_admin: Address,
