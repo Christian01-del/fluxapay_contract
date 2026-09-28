@@ -71,6 +71,12 @@ export interface CreatePaymentArgs {
    */
   metadata: Option<Record<string, string>>;
   fee_waiver_code: Option<string>;
+  /** Issue #482 */
+  retry_of_payment_id?: Option<string>;
+  /** Issue #841: expected muxed sub-account ID (from M-address). */
+  payer_muxed_id?: Option<u64 | bigint>;
+  /** Issue #516 */
+  payer?: Option<string>;
   /** Issue #844: when true, confirmPayment may accept tipAmount. */
   tip_enabled: boolean;
 }

@@ -1498,7 +1498,8 @@ impl PaymentProcessor {
             metadata: args.metadata.clone(),
             fee_waiver_code: args.fee_waiver_code.clone(),
             retry_of_payment_id: None,
-            payer_muxed_id: None,
+            // Issue #841: persist expected muxed sub-account ID for confirm matching.
+            payer_muxed_id: args.payer_muxed_id,
             payment_link_id: None,
             tip_enabled: args.tip_enabled,
             tip_amount: None,
@@ -1783,7 +1784,7 @@ impl PaymentProcessor {
                 metadata: args.metadata.clone(),
                 fee_waiver_code: args.fee_waiver_code.clone(),
                 retry_of_payment_id: None,
-                payer_muxed_id: None,
+                payer_muxed_id: args.payer_muxed_id,
                 payment_link_id: None,
                 tip_enabled: args.tip_enabled,
                 tip_amount: None,
@@ -2222,6 +2223,15 @@ impl PaymentProcessor {
             return Err(Error::PaymentExpired);
         }
 
+        // Issue #841: if a muxed payer was specified at create time, the incoming
+        // muxed sub-account ID must match. When no muxed payer was specified,
+        // any payer (G- or M-address) is accepted.
+        if let Some(expected_muxed_id) = payment.payer_muxed_id {
+            match payer_muxed_id {
+                Some(actual) if actual == expected_muxed_id => {}
+                _ => return Err(Error::MuxedAccountMismatch),
+            }
+        }
         let transaction_hash = args.transaction_hash.clone();
         let payer_address = args.payer_address.clone();
         let amount_received = args.amount_received;
@@ -2232,8 +2242,8 @@ impl PaymentProcessor {
         payment.payer_address = Some(payer_address.clone());
         payment.transaction_hash = Some(transaction_hash);
         payment.confirmed_at = Some(env.ledger().timestamp());
-        // Issue #484: Store muxed ID if M-address was used
-        payment.payer_muxed_id = payer_muxed_id;
+        // Issue #484 / #841: Store muxed ID if M-address was used (or keep expected)
+        payment.payer_muxed_id = payer_muxed_id.or(payment.payer_muxed_id);
 
         // Get merchant-specific tolerance if available, otherwise use global default
         let merchant_tolerance = if let Some(registry_address) = env

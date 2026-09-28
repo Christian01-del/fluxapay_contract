@@ -6,12 +6,16 @@ pub mod data_keys;
 pub mod payment_processor;
 pub mod refund_manager;
 pub mod types;
+pub mod gas_estimator;
 
 pub use constants::*;
 pub use data_keys::*;
 pub use payment_processor::*;
 pub use refund_manager::*;
 pub use types::*;
+pub use gas_estimator::{
+    CostEstimate, GasEstimator, GasEstimatorClient, GasEstimatorError, Operation,
+};
 
 mod access_control;
 pub mod account_abstraction;
@@ -414,6 +418,8 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
+    MuxedAccountMismatch = 70,
     /// Issue #836: Subscription is still in its free trial; no charge yet.
     TrialActive = 70,
     /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
@@ -2759,8 +2765,8 @@ impl RefundManager {
 pub mod utils;
 pub use utils::{format_id, is_valid_cid, validate_id, validate_ipfs_multihash};
 
-pub mod gas_estimator;
-pub use gas_estimator::{CostEstimate, GasEstimator, GasEstimatorClient, Operation};
+// gas_estimator is declared at the top of lib.rs (Issue #835).
+pub use gas_estimator::{CostEstimate, GasEstimator, GasEstimatorClient, GasEstimatorError, Operation};
 
 pub mod merchant_registry;
 pub use merchant_registry::{
