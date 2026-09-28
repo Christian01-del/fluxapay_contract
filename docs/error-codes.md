@@ -80,6 +80,8 @@ document on every CI run to catch drift between them.
 | 67 | `InputTooLong` | A user-supplied string field exceeds its maximum allowed length. | `reason` > 256 chars in refund creation; `evidence` > 512 chars in dispute creation; `resolution_notes` > 512 chars in dispute rejection. | Shorten the field: `reason` ≤ 256 chars, `evidence` ≤ 512 chars, `resolution_notes` ≤ 512 chars. |
 | 68 | `TimelockNotExpired` | A timelocked admin action was executed before delay expired. | Executing action before timelock delay has elapsed. | Wait for the delay period to elapse. |
 | 69 | `InvalidEvidenceCid` | Evidence field is not a valid IPFS CID. | Passing a non-CID string as dispute evidence. | Pass a valid IPFS CID (v0 starting with Qm or v1 starting with bafy). |
+| 70 | `InvalidPaymentLink` | Payment link configuration or parameters are invalid. | Malformed payment link creation parameters. | Verify payment link arguments and try again. |
+| 71 | `KycLimitExceeded` | Payment amount or cumulative monthly volume exceeds merchant's KYC tier cap. | Single payment exceeds tier max, or cumulative monthly volume exceeds tier cap under ADR-0003. | Upgrade merchant KYC tier to increase payment volume limits. |
 | 404 | `PaymentNotFound` | No payment exists with the given `payment_id`. | Typo'd ID, or payment was never created. | Verify the ID via `get_payment` / listing endpoints. |
 | 405 | `RefundNotFound` | No refund exists with the given `refund_id`. | Typo'd ID, or refund was never created. | Verify the ID via `get_refund` / `get_payment_refunds`. |
 | 406 | `InvalidAmount` | Amount is zero, negative, or otherwise invalid. | Passing a non-positive amount to a payment/refund call. | Pass a strictly positive `i128` amount. |
@@ -148,6 +150,7 @@ document on every CI run to catch drift between them.
 | 6 | `PayoutAddressNotWhitelisted` | Payout address is not on the merchant's approved list. | Withdrawing to an address that wasn't whitelisted. | Whitelist the payout address before withdrawing to it. |
 | 7 | `WhitelistModeRequiresBusinessTier` | Only Business-tier merchants may enable whitelist mode. | Enabling customer whitelist mode below Business tier. | Upgrade the merchant to Business tier first. |
 | 8 | `PayerNotWhitelisted` | Payer is not in the merchant's customer whitelist. | Whitelist mode is on and the payer isn't listed. | Merchant must add the payer to the whitelist. |
+| 12 | `KycLimitExceeded` | Single payment or cumulative monthly volume exceeds merchant's KYC tier cap. | Merchant at tier 0 or tier 1 breached per-payment or monthly limit. | Upgrade merchant KYC tier. |
 
 ## `MerchantAuthError` (`fluxapay/src/merchant_auth.rs`)
 

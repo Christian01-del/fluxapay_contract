@@ -320,4 +320,124 @@ jobs:
           fi
 
   # Job 5: Run tests
-  te
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
+        with:
+          toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run tests
+        run: cargo test --verbose --all-features
+
+  # Job 5b: Bounded property tests
+  proptest:
+    name: Property Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
+        with:
+          toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-proptest-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-proptest-
+
+      - name: Run bounded property tests
+        run: "PROPTEST_CASES=256 cargo test -p fluxapay proptests:: --all-features -- --test-threads=1"
+
+  # Job 6: Check SDK build, types, and JSDoc
+  sdk-check:
+    name: SDK Build Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Build SDK
+        working-directory: sdk
+        run: npm run build
+
+      - name: Type check
+        working-directory: sdk
+        run: npx tsc --noEmit
+
+      - name: Lint JSDoc annotations
+        working-directory: sdk
+        run: npm run lint:jsdoc
+
+      - name: Check error map is in sync with contract source
+        working-directory: sdk
+        run: npm run check-error-map-sync
+
+      - name: Check mainnet contract IDs
+        run: node scripts/check-mainnet-contract-ids.js
+
+  # Final job: Report overall status
+  ci-success:
+    name: CI Success
+    if: ${{ always() }}
+    needs: [format, lint, build, wasm-size-check, test, proptest, sdk-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.format.result }}" == "success" ]] && \
+             [[ "${{ needs.lint.result }}" == "success" ]] && \
+             [[ "${{ needs.build.result }}" == "success" ]] && \
+             [[ "${{ needs.wasm-size-check.result }}" == "success" ]] && \
+             [[ "${{ needs.test.result }}" == "success" ]] && \
+             [[ "${{ needs.proptest.result }}" == "success" ]] && \
+             [[ "${{ needs.sdk-check.result }}" == "success" ]]; then
+            echo "✅ All CI checks passed!"
+            exit 0
+          else
+            echo "❌ Some CI checks failed"
+            exit 1
+          fi

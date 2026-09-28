@@ -209,6 +209,8 @@ export interface CreatePaymentParams {
    * codes.
    */
   feeWaiverCode?: string;
+  /** Issue #767: When true, allows customers to fund this payment across multiple transactions. */
+  allowPartial?: boolean;
   /**
    * Issue #841: Optional muxed payer as a Stellar M-address string.
    * Decoded to the underlying G-address + 64-bit sub-account ID. When set,
@@ -649,6 +651,8 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   67: "InputTooLong",
   68: "TimelockNotExpired",
   69: "InvalidEvidenceCid",
+  70: "InvalidPaymentLink",
+  71: "KycLimitExceeded",
   70: "MuxedAccountMismatch",
   70: "TrialActive",
   71: "TrialTooLong",
@@ -657,31 +661,79 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   406: "InvalidAmount",
 };
 
-export class FluxapayError extends Error {
-  readonly code: number;
-  readonly contractErrorName: string;
-  readonly cause?: unknown;
-  readonly locale: string;
-
-  constructor(
-    code: number,
-    contractErrorName: string,
-    message?: string,
-    cause?: unknown,
-    locale = "en",
-  ) {
-    super(message ?? contractErrorName);
-    this.name = `${contractErrorName}Error`;
-    this.code = code;
-    this.contractErrorName = contractErrorName;
-    this.cause = cause;
-    this.locale = locale;
-  }
-
-  get localizedMessage(): string {
-    return getLocalizedErrorMessage(this.code, this.locale, this.message);
-  }
-}
+export {
+  FluxapayError,
+  UnauthorizedError,
+  PaymentAlreadyExistsError,
+  PaymentExpiredError,
+  InvalidPaymentIdError,
+  RefundAlreadyProcessedError,
+  DisputeNotFoundError,
+  DisputeAlreadyResolvedError,
+  PaymentAlreadyProcessedError,
+  AccessControlContractError,
+  RefundExceedsPaymentError,
+  ContractPausedError,
+  RateLimitExceededError,
+  RefundCancelledError,
+  UnsupportedTokenError,
+  AmountBelowMinError,
+  AmountAboveMaxError,
+  InvalidExpiryError,
+  InvalidSettlementError,
+  DuplicateIdempotencyKeyError,
+  InvalidAddressError,
+  ArbitrageDetectedError,
+  SwapPathInvalidError,
+  OraclePriceDeviationError,
+  SubscriptionInGracePeriodError,
+  SubscriptionRetryExhaustedError,
+  InvalidResumeTimestampError,
+  MerchantAuthContractError,
+  InvalidSplitSumError,
+  MissingReceiptHashError,
+  RefundExpiredError,
+  AlreadyVotedError,
+  TierVolumeLimitExceededError,
+  BatchTooLargeContractError,
+  InsufficientArbitratorsError,
+  ArbitrationVotingThresholdNotMetError,
+  RefundCooldownNotElapsedError,
+  FeeProposalNotReadyError,
+  NoFeeProposalError,
+  InvalidEvidenceFormatError,
+  DisputeRateLimitExceededError,
+  InvalidSettlementSignatureError,
+  StaleOracleRateError,
+  LinkExpiredError,
+  ReentrancyError,
+  UpgradeFailedError,
+  InsufficientTreasuryBalanceError,
+  MetadataTooLargeError,
+  MetadataValueTooLongError,
+  InvalidMemoTypeError,
+  MemoTooLongError,
+  InvalidMemoIdError,
+  PayerNotWhitelistedError,
+  LinkMaxUsesReachedError,
+  DirectTransferNotDisputableError,
+  MaxRetriesExceededError,
+  RetryChainTooDeepError,
+  InvalidStatusTransitionError,
+  RefundNotApprovedError,
+  RouterNotAllowedError,
+  RouteOutputInsufficientError,
+  BatchContainsDuplicatesError,
+  InputTooLongError,
+  TimelockNotExpiredError,
+  InvalidEvidenceCidError,
+  InvalidPaymentLinkError,
+  KycLimitExceededError,
+  PaymentNotFoundError,
+  RefundNotFoundError,
+  InvalidAmountError,
+  ERROR_CONSTRUCTOR_MAP,
+} from "./errors.js";
 
 /**
  * Issue #814: raised client-side when a batch exceeds `MAX_BATCH_STATUS_IDS`.
@@ -743,11 +795,16 @@ export function toFluxapayError(error: unknown, locale = "en"): FluxapayError {
     throw new Error("Unknown Fluxapay SDK error");
   }
 
+  const Constructor = ERROR_CONSTRUCTOR_MAP[code];
   const contractErrorName = FLUXAPAY_CONTRACT_ERROR_MAP[code] ?? "UnknownContractError";
+  const message = `${contractErrorName} (contract error #${code})`;
+  if (Constructor) {
+    return new Constructor(message, error, locale);
+  }
   return new FluxapayError(
     code,
     contractErrorName,
-    `${contractErrorName} (contract error #${code})`,
+    message,
     error,
     locale,
   );
@@ -829,6 +886,7 @@ function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
     metadata_hash: undefined,
     metadata: params.metadata,
     fee_waiver_code: params.feeWaiverCode,
+    allow_partial: params.allowPartial,
     payer_muxed_id: payerMuxedId,
   };
 }
@@ -958,6 +1016,7 @@ export class FluxapayClient {
   /**
    * Get an FX Oracle client, using `oracleContractId` from config when
    * provided, falling back to `FLUXAPAY_CONTRACT_IDS[network].fxOracle`.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   fxOracle(): FxOracleClient {
     const oracleContractId = resolveContractId(
@@ -1037,6 +1096,7 @@ export class FluxapayClient {
 
   /**
    * Create a new payment charge
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createPayment(params: CreatePaymentParams) {
     return withMappedContractError(() =>
@@ -1089,6 +1149,7 @@ export class FluxapayClient {
 
   /**
    * Issue #856: Executes a token swap via DexRouter with slippage tolerance and max_slippage_bps guards.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async executeSwap(
     params: {
@@ -1127,6 +1188,7 @@ export class FluxapayClient {
 
   /**
    * Verify a payment via oracle
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async verifyPayment(params: {
     oracle: string;
@@ -1147,6 +1209,9 @@ export class FluxapayClient {
   }
 
   /**
+   * verifyPaymentBatch
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
    * Issue #844: Confirm a payment (checkout flow), optionally with a tip.
    * `tipAmount` is only accepted when the payment was created with
    * `tipEnabled: true`. Tip is stored separately from base `amount`.
@@ -1201,6 +1266,7 @@ export class FluxapayClient {
 
   /**
    * Register a new merchant in the MerchantRegistry contract
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async registerMerchant(params: RegisterMerchantParams) {
     if (this.config.merchantRegistryContractId) {
@@ -1221,6 +1287,7 @@ export class FluxapayClient {
 
   /**
    * Update merchant settings in the MerchantRegistry contract
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async updateMerchant(params: UpdateMerchantParams) {
     if (this.config.merchantRegistryContractId) {
@@ -1242,6 +1309,7 @@ export class FluxapayClient {
 
   /**
    * Get merchant details
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchant(merchantId: string) {
     if (this.config.merchantRegistryContractId) {
@@ -1257,6 +1325,7 @@ export class FluxapayClient {
 
   /**
    * Verify a merchant (admin only)
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async verifyMerchant(admin: string, merchantId: string) {
     if (this.config.merchantRegistryContractId) {
@@ -1279,6 +1348,7 @@ export class FluxapayClient {
    * contract ID is configured; falls back to calling the underlying
    * `set_merchant_fee_waiver` on the main contract (MerchantRegistry
    * embedded path).
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async setMerchantFeeWaiver(params: {
     admin: string;
@@ -1305,6 +1375,7 @@ export class FluxapayClient {
    * currency unit). Pass `null` to clear the override and use the global
    * default. Signed by the **merchant** (`merchant_id.require_auth()` on-chain);
    * the contract caps the effective tolerance at 1% of each payment amount.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async setMerchantPaymentTolerance(
     merchantId: string,
@@ -1317,6 +1388,7 @@ export class FluxapayClient {
    * Issue #630 / #529: Read a merchant's effective payment tolerance — the
    * merchant-specific override when set, otherwise the global default.
    * Read-only.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchantPaymentTolerance(merchantId: string): Promise<bigint> {
     return this.getMerchantRegistry().getMerchantPaymentTolerance(merchantId);
@@ -1326,6 +1398,7 @@ export class FluxapayClient {
    * Issue #630 / #529: Set the global default payment tolerance. Signed by the
    * MerchantRegistry **admin**; an unauthorized caller surfaces as a mapped
    * `Unauthorized` `FluxapayError`, and negative values are rejected.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async setGlobalPaymentTolerance(admin: string, tolerance: bigint): Promise<void> {
     return this.getMerchantRegistry().setGlobalPaymentTolerance(admin, tolerance);
@@ -1333,6 +1406,7 @@ export class FluxapayClient {
 
   /**
    * Issue #630 / #529: Read the global default payment tolerance. Read-only.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getGlobalPaymentTolerance(): Promise<bigint> {
     return this.getMerchantRegistry().getGlobalPaymentTolerance();
@@ -1352,6 +1426,7 @@ export class FluxapayClient {
    * @param code             – case-sensitive promo code string (e.g. "LAUNCH2026")
    * @param expiresAt        – ledger timestamp (seconds) after which the code is rejected
    * @param maxUses          – maximum total payments that can consume this code (>=1)
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async addFeeWaiverCode(params: {
     admin: string;
@@ -1374,6 +1449,7 @@ export class FluxapayClient {
    * (inclusive, ledger timestamps in seconds), for treasury reporting.
    *
    * Read-only — no authorization required.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPlatformFeeReport(fromTs: bigint, toTs: bigint): Promise<PlatformFeeReport> {
     const result = await withMappedContractError(() =>
@@ -1396,6 +1472,7 @@ export class FluxapayClient {
    * subsequent payment/refund/dispute operations.
    *
    * Requires the PaymentProcessor ADMIN role.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async addToBlacklist(admin: string, address: string): Promise<void> {
     return withMappedContractError(() =>
@@ -1410,6 +1487,7 @@ export class FluxapayClient {
    * Issue #660: Remove an address from the global compliance blacklist.
    *
    * Requires the PaymentProcessor ADMIN role.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async removeFromBlacklist(admin: string, address: string): Promise<void> {
     return withMappedContractError(() =>
@@ -1424,6 +1502,7 @@ export class FluxapayClient {
    * Issue #660: Check whether an address is currently blacklisted.
    *
    * Read-only — no authorization required.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async isBlacklisted(address: string): Promise<boolean> {
     return withMappedContractError(() =>
@@ -1435,6 +1514,7 @@ export class FluxapayClient {
 
   /**
    * Create a refund request
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createRefund(params: {
     paymentId: string;
@@ -1454,6 +1534,7 @@ export class FluxapayClient {
 
   /**
    * Process a pending refund
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async processRefund(operator: string, refundId: string) {
     return withMappedContractError(() =>
@@ -1467,6 +1548,7 @@ export class FluxapayClient {
   /**
    * Issue #676: Read the consolidated refund policy — `require_receipt_hash`,
    * `refund_expiry_secs`, `refund_fee_bps`, and `cooldown_secs` — in one call.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getRefundPolicy() {
     return withMappedContractError(() => this.contract.get_refund_policy());
@@ -1474,6 +1556,7 @@ export class FluxapayClient {
 
   /**
    * Get refund details by ID
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getRefund(refundId: string) {
     return withMappedContractError(() =>
@@ -1497,6 +1580,7 @@ export class FluxapayClient {
   /**
    * Customer grants a merchant permission to pull up to `limitPerPeriod`
    * tokens per `periodSecs`-second billing window.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async preAuthorizeMerchant(params: {
     customer: string;
@@ -1520,6 +1604,7 @@ export class FluxapayClient {
   /**
    * Merchant pulls `amount` tokens from `customer` against an existing
    * pre-authorization. Returns the cumulative amount pulled this period.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async pullFromAuthorization(
     merchant: string,
@@ -1538,6 +1623,7 @@ export class FluxapayClient {
 
   /**
    * Customer revokes a previously granted merchant authorization.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async revokeAuthorization(customer: string, merchant: string): Promise<void> {
     return withMappedContractError(async () => {
@@ -1552,6 +1638,7 @@ export class FluxapayClient {
   /**
    * Fetch the stored authorization for a (customer, merchant) pair, or
    * `null` if none exists.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getAuthorization(
     customer: string,
@@ -1579,6 +1666,7 @@ export class FluxapayClient {
 
   /**
    * Issue #854: Merchant creates a scoped API key.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createApiKey(params: CreateApiKeyParams): Promise<ApiKeyRecord> {
     return withMappedContractError(async () => {
@@ -1593,6 +1681,7 @@ export class FluxapayClient {
 
   /**
    * Issue #854: Retrieve an API key record by its key hash.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getApiKey(keyHash: string): Promise<ApiKeyRecord> {
     return withMappedContractError(async () => {
@@ -1605,6 +1694,7 @@ export class FluxapayClient {
 
   /**
    * Issue #854: Merchant revokes an active API key.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async revokeApiKey(merchant: string, keyHash: string): Promise<void> {
     return withMappedContractError(async () => {
@@ -1619,6 +1709,7 @@ export class FluxapayClient {
   /**
    * Get all refunds for a payment
 
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPaymentRefunds(paymentId: string) {
     return withMappedContractError(() =>
@@ -1630,6 +1721,7 @@ export class FluxapayClient {
 
   /**
    * Create a dispute for a payment
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createDispute(params: {
     paymentId: string;
@@ -1716,6 +1808,7 @@ export class FluxapayClient {
 
   /**
    * Move a dispute to under-review status
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async reviewDispute(operator: string, disputeId: string) {
     return withMappedContractError(() =>
@@ -1728,6 +1821,7 @@ export class FluxapayClient {
 
   /**
    * Resolve a dispute by issuing a refund
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async resolveDisputeWithRefund(
     operator: string,
@@ -1745,6 +1839,7 @@ export class FluxapayClient {
 
   /**
    * Reject a dispute
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async rejectDispute(operator: string, disputeId: string, notes: string) {
     return withMappedContractError(() =>
@@ -1758,6 +1853,7 @@ export class FluxapayClient {
 
   /**
    * Get dispute details by ID
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getDispute(disputeId: string) {
     return withMappedContractError(() =>
@@ -1769,6 +1865,7 @@ export class FluxapayClient {
 
   /**
    * Get all disputes for a payment
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPaymentDisputes(paymentId: string) {
     return withMappedContractError(() =>
@@ -1787,6 +1884,7 @@ export class FluxapayClient {
    * @param authority - The merchant's Stellar address (must sign; must match
    * `payment.merchant_id`).
    * @param paymentId - The `PartiallyPaid` payment to accept.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async acceptPartialPayment(authority: string, paymentId: string): Promise<void> {
     return withMappedContractError(async () => {
@@ -1807,6 +1905,7 @@ export class FluxapayClient {
    * @param operator - The payer's Stellar address (must sign).
    * @param paymentId - The `PartiallyPaid` payment to top up.
    * @param topUpAmount - Additional amount (in stroops) being sent, must be > 0.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async completePartialPayment(
     operator: string,
@@ -1825,6 +1924,7 @@ export class FluxapayClient {
 
   /**
    * Get payment details
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPayment(paymentId: string) {
     return withMappedContractError(() =>
@@ -1833,6 +1933,9 @@ export class FluxapayClient {
   }
 
   /**
+   * getPaymentStatusHistory
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
    * Issue #816: Produce a signed, shareable payment receipt for a confirmed
    * (or settled) payment. The `proof` field is an Ed25519 signature over the
    * canonical receipt fields, verifiable offline with {@link verifyReceipt}.
@@ -2006,6 +2109,10 @@ export class FluxapayClient {
     return results;
   }
 
+  /**
+   * generateReconciliationReportPaginated
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async generateReconciliationReportPaginated(params: {
     merchantId: string;
     fromTs: bigint;
@@ -2024,6 +2131,10 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * getAllReconciliationPages
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async getAllReconciliationPages(params: {
     merchantId: string;
     fromTs: bigint;
@@ -2048,6 +2159,7 @@ export class FluxapayClient {
   /**
    * Issue #489: Get payment by metadata_hash for order reconciliation.
    * Performs reverse lookup using the merchant-supplied metadata hash.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPaymentByMetadataHash(metadataHash: Buffer) {
     return withMappedContractError(() =>
@@ -2057,6 +2169,7 @@ export class FluxapayClient {
 
   /**
    * Issue #492: Get customer profile for a merchant.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getCustomer(merchantId: string, customerId: string) {
     return withMappedContractError(() =>
@@ -2066,6 +2179,7 @@ export class FluxapayClient {
 
   /**
    * Issue #492: Get top customers for a merchant sorted by total spending.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getTopCustomers(merchantId: string, limit: number) {
     return withMappedContractError(() =>
@@ -2082,6 +2196,7 @@ export class FluxapayClient {
    * cap. Results are already ordered by `totalVolume` descending.
    *
    * Read-only — no authorization required.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getTopMerchants(limit: number): Promise<MerchantRanking[]> {
     const result = await withMappedContractError(() =>
@@ -2103,6 +2218,7 @@ export class FluxapayClient {
    * dashboard pagination.
    *
    * Read-only — no authorization required.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchantPaymentCount(merchantId: string): Promise<number> {
     const result = await withMappedContractError(() =>
@@ -2123,6 +2239,7 @@ export class FluxapayClient {
    * directly instead of walking an unbounded range of day buckets.
    *
    * Read-only — no authorization required.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchantAnalytics(
     merchantId: string,
@@ -2171,6 +2288,7 @@ export class FluxapayClient {
 
   /**
    * Issue #488: Public TTL bump for a single payment (permissionless).
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async bumpPaymentTTL(paymentId: string) {
     return withMappedContractError(() =>
@@ -2180,6 +2298,7 @@ export class FluxapayClient {
 
   /**
    * Issue #488: Bulk bump TTLs for payment maintenance (max 50 per call).
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async bulkBumpPaymentTTLs(paymentIds: string[]) {
     return withMappedContractError(() =>
@@ -2197,6 +2316,7 @@ export class FluxapayClient {
    * generate`), so this calls through `this.contract` untyped.
    *
    * @returns The refund ID created for the settlement.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async settleDisputeCollaboratively(params: {
     disputeId: string;
@@ -2223,6 +2343,7 @@ export class FluxapayClient {
    * Issue #665: Retrieve the collaborative settlement record for a dispute,
    * or `null` if the dispute has no such record (or doesn't exist —
    * `DisputeNotFound`).
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getCollaborativeSettlement(disputeId: string): Promise<CollaborativeSettlement | null> {
     try {
@@ -2249,6 +2370,7 @@ export class FluxapayClient {
    * Wraps `RefundManager::submit_usage_metrics`. Note: bindings for this
    * entry point haven't been regenerated yet (TODO: `npm run generate`),
    * so this calls through `this.contract` untyped.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async submitUsageMetrics(params: {
     subscriptionId: string;
@@ -2272,6 +2394,7 @@ export class FluxapayClient {
   /**
    * Issue #664: Retrieve usage-metric records for a subscription recorded
    * within `[fromTimestamp, toTimestamp]` (inclusive), oldest first.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getUsageMetrics(
     subscriptionId: string,
@@ -2413,6 +2536,7 @@ export class FluxapayClient {
 
   /**
    * Issue #680: Fetch a single invoice by id from the FluxaPay backend.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getInvoice(invoiceId: string): Promise<Invoice> {
     const res = await fetch(`${this.getApiUrl()}/invoices/${invoiceId}`);
@@ -2424,6 +2548,7 @@ export class FluxapayClient {
 
   /**
    * Issue #680: List invoice ids for a merchant from the FluxaPay backend.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchantInvoices(merchantId: string): Promise<string[]> {
     const res = await fetch(`${this.getApiUrl()}/merchants/${merchantId}/invoices`);
@@ -2435,6 +2560,7 @@ export class FluxapayClient {
 
   /**
    * Issue #680: Create a new invoice via the FluxaPay backend.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createInvoice(params: CreateInvoiceParams): Promise<Invoice> {
     const res = await fetch(`${this.getApiUrl()}/invoices`, {
@@ -2450,6 +2576,7 @@ export class FluxapayClient {
 
   /**
    * Issue #680: Mark an invoice as paid via the FluxaPay backend.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async markInvoicePaid(invoiceId: string): Promise<void> {
     const res = await fetch(`${this.getApiUrl()}/invoices/${invoiceId}/mark-paid`, {
@@ -2488,6 +2615,7 @@ export class FluxapayClient {
    * @param params.metadata - Optional key/value metadata (≤20 keys, key≤64, value≤256)
    * @param params.baseUrl - Optional checkout base URL for shareable_url
    * @returns A promise resolving to the new link ID
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createLink(params: CreateLinkParams): Promise<string> {
     return this.getPaymentLinkManager().createLink(params);
@@ -2496,6 +2624,7 @@ export class FluxapayClient {
   /**
    * Issue #637: Bulk-create up to 50 payment links for one merchant in a single
    * atomic call. Maps to `PaymentLinkManager.batch_create_links` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async batchCreateLinks(merchant: string, links: BatchLinkItem[]): Promise<string[]> {
     return this.getPaymentLinkManager().batchCreateLinks(merchant, links);
@@ -2510,6 +2639,7 @@ export class FluxapayClient {
    * fails the whole transaction reverts.
    *
    * @returns `[invoice, paymentLink]` as returned by the contract
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createInvoiceWithLink(params: {
     merchantId: string;
@@ -2569,6 +2699,7 @@ export class FluxapayClient {
    *
    * @returns `{ linkId, shareableUrl, qrCodeData }` where `qrCodeData` is the
    * shareable URL (or link ID fallback) suitable for QR generation.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createPaymentLink(params: CreateLinkParams): Promise<CreatePaymentLinkResult> {
     return this.getPaymentLinkManager().createPaymentLink(params);
@@ -2576,6 +2707,7 @@ export class FluxapayClient {
 
   /**
    * Query the on-chain shareable URL for a payment link.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getLinkUrl(linkId: string): Promise<string | null> {
     return this.getPaymentLinkManager().getLinkUrl(linkId);
@@ -2588,6 +2720,7 @@ export class FluxapayClient {
    * @param linkId - The payment link ID
    * @param amount - The amount to pay in stroops
    * @param usdcToken - The USDC token contract address
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async useLink(
     payer: string,
@@ -2603,6 +2736,7 @@ export class FluxapayClient {
    * Maps to `PaymentLinkManager.deactivate_link` on-chain.
    * @param merchant - The merchant's Stellar address
    * @param linkId - The payment link ID to deactivate
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async deactivateLink(merchant: string, linkId: string): Promise<void> {
     return this.getPaymentLinkManager().deactivateLink(merchant, linkId);
@@ -2613,6 +2747,7 @@ export class FluxapayClient {
    * Maps to `PaymentLinkManager.get_link` on-chain.
    * @param linkId - The payment link ID
    * @returns A promise resolving to the PaymentLink details
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getLink(linkId: string): Promise<PaymentLink> {
     return this.getPaymentLinkManager().getLink(linkId);
@@ -2626,6 +2761,7 @@ export class FluxapayClient {
    * @param opts.offset - Index into the merchant's link list (default 0)
    * @param opts.limit - Max links to return, 1..=100 (default 100)
    * @param opts.activeOnly - Exclude deactivated/expired links (default false)
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getMerchantLinks(
     merchantId: string,
@@ -2639,6 +2775,7 @@ export class FluxapayClient {
    * Maps to `PaymentLinkManager.verify_batch` on-chain.
    * @param linkIds - Array of link IDs to verify
    * @returns A promise resolving to an array of active link IDs
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async verifyBatch(linkIds: string[]): Promise<string[]> {
     return this.getPaymentLinkManager().verifyBatch(linkIds);
@@ -2648,6 +2785,7 @@ export class FluxapayClient {
    * Record a view of a payment link (permissionless).
    * Maps to `PaymentLinkManager.record_link_view` on-chain.
    * @param linkId - The payment link ID
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async recordLinkView(linkId: string): Promise<void> {
     return this.getPaymentLinkManager().recordLinkView(linkId);
@@ -2658,6 +2796,7 @@ export class FluxapayClient {
    * Maps to `PaymentLinkManager.get_link_analytics` on-chain.
    * @param linkId - The payment link ID
    * @returns A promise resolving to the LinkAnalytics
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getLinkAnalytics(linkId: string): Promise<LinkAnalytics> {
     return this.getPaymentLinkManager().getLinkAnalytics(linkId);
@@ -2667,6 +2806,7 @@ export class FluxapayClient {
    * Issue #683: Fetch a health summary of the PaymentProcessor contract.
    * No authentication required — this is a public read endpoint.
    * @returns ContractHealth with version, pause state, treasury balance, and config flags.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getContractHealth(): Promise<{
     version: string;
@@ -2684,6 +2824,7 @@ export class FluxapayClient {
   /**
    * Issue #679: Create a subscription plan (merchant only).
    * Maps to `PaymentProcessor.create_subscription_plan` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createSubscriptionPlan(params: CreatePlanParams): Promise<string> {
     const billingIntervalMap: Record<string, number> = {
@@ -2710,6 +2851,7 @@ export class FluxapayClient {
   /**
    * Issue #679: Fetch a subscription plan by ID.
    * Maps to `PaymentProcessor.get_subscription_plan` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getSubscriptionPlan(planId: string): Promise<SubscriptionPlan> {
     const raw: any = await withMappedContractError(() =>
@@ -2739,6 +2881,7 @@ export class FluxapayClient {
   /**
    * Issue #679: Subscribe a payer to a subscription plan.
    * Maps to `PaymentProcessor.subscribe_to_plan` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async subscribeToPlan(params: {
     payer: string;
@@ -2754,7 +2897,10 @@ export class FluxapayClient {
     );
   }
 
-  /** Create a subscription and return its contract-generated ID. */
+  /**
+   * Create a subscription and return its contract-generated ID.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async subscribe(params: SubscribeParams): Promise<string> {
     const raw: any = await withMappedContractError(() =>
       (this.contract as any).subscribe({
@@ -2771,6 +2917,7 @@ export class FluxapayClient {
   /**
    * Charge a due subscription. This uses the contract's `process_subscription`
    * entry point, which resolves the configured billing token internally.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async chargeSubscription(operator: string, subscriptionId: string): Promise<void> {
     await withMappedContractError(() =>
@@ -2781,6 +2928,10 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * cancelSubscription
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async cancelSubscription(caller: string, subscriptionId: string): Promise<void> {
     await withMappedContractError(() =>
       (this.contract as any).cancel_subscription({
@@ -2791,18 +2942,30 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * pauseSubscription
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async pauseSubscription(caller: string, subscriptionId: string): Promise<void> {
     await withMappedContractError(() =>
       (this.contract as any).pause_subscription({ payer: caller, subscription_id: subscriptionId }),
     );
   }
 
+  /**
+   * resumeSubscription
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async resumeSubscription(caller: string, subscriptionId: string): Promise<void> {
     await withMappedContractError(() =>
       (this.contract as any).resume_subscription({ payer: caller, subscription_id: subscriptionId }),
     );
   }
 
+  /**
+   * getSubscription
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async getSubscription(subscriptionId: string): Promise<Subscription> {
     const raw: any = await withMappedContractError(() =>
       (this.contract as any).get_subscription({ subscription_id: subscriptionId }),
@@ -2810,6 +2973,10 @@ export class FluxapayClient {
     return fromContractSubscription(raw.result);
   }
 
+  /**
+   * getPayerSubscriptions
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async getPayerSubscriptions(payer: string): Promise<Subscription[]> {
     const raw: any = await withMappedContractError(() =>
       (this.contract as any).get_payer_subscriptions({ payer }),
@@ -2825,6 +2992,7 @@ export class FluxapayClient {
    * `includeCancelled` is `false` (the default), subscriptions with status
    * `Cancelled` are filtered out before pagination. `limit` is hard-capped at
    * 100 per call; pass `0` for the maximum page.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getPlanSubscribers(params: {
     planId: string;
@@ -2847,6 +3015,7 @@ export class FluxapayClient {
    * Create a new payment stream. Tokens are pulled from `params.sender` into
    * the contract and streamed to `params.receiver` at `ratePerSecond`.
    * Maps to `PaymentProcessor.create_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async createStream(params: CreateStreamParams): Promise<PaymentStream> {
     const raw = await withMappedContractError(() =>
@@ -2868,6 +3037,7 @@ export class FluxapayClient {
    * @param recipient - Must be the stream's receiver; must sign.
    * @param streamId - The stream to withdraw from.
    * @param amount - Optional amount cap; defaults to withdrawing everything accrued.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async withdrawStream(recipient: string, streamId: string, amount?: bigint): Promise<void> {
     return withMappedContractError(() =>
@@ -2880,12 +3050,20 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * setStreamFeeRecipient
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async setStreamFeeRecipient(admin: string, recipient: string): Promise<void> {
     return withMappedContractError(() =>
       (this.contract as any).set_stream_fee_recipient({ admin, recipient }),
     );
   }
 
+  /**
+   * getStreamFeeRecipient
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   async getStreamFeeRecipient(): Promise<string | null> {
     return withMappedContractError(() =>
       (this.contract as any).get_stream_fee_recipient({}),
@@ -2895,6 +3073,7 @@ export class FluxapayClient {
   /**
    * Cancel an active stream and refund any un-accrued deposit to the sender.
    * Maps to `PaymentProcessor.cancel_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async cancelStream(sender: string, streamId: string): Promise<void> {
     return withMappedContractError(() =>
@@ -2905,6 +3084,7 @@ export class FluxapayClient {
   /**
    * Pause an active stream, freezing accrual until resumed.
    * Maps to `PaymentProcessor.pause_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async pauseStream(sender: string, streamId: string): Promise<void> {
     return withMappedContractError(() =>
@@ -2915,6 +3095,7 @@ export class FluxapayClient {
   /**
    * Resume a paused stream, restarting accrual from the current timestamp.
    * Maps to `PaymentProcessor.resume_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async resumeStream(sender: string, streamId: string): Promise<void> {
     return withMappedContractError(() =>
@@ -2925,6 +3106,7 @@ export class FluxapayClient {
   /**
    * Top up an existing stream's deposit.
    * Maps to `PaymentProcessor.top_up_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async topUpStream(sender: string, streamId: string, amount: bigint): Promise<void> {
     return withMappedContractError(() =>
@@ -2943,6 +3125,7 @@ export class FluxapayClient {
    * whose TTL was bumped.
    *
    * Maps to `PaymentProcessor.bulk_bump_stream_ttls` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async bulkBumpStreamTTLs(streamIds: string[]): Promise<number> {
     const result = await withMappedContractError(() =>
@@ -2955,6 +3138,7 @@ export class FluxapayClient {
   /**
    * Get stream details by ID.
    * Maps to `PaymentProcessor.get_stream` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getStream(streamId: string): Promise<PaymentStream> {
     const raw = await withMappedContractError(() =>
@@ -2966,6 +3150,7 @@ export class FluxapayClient {
   /**
    * Query streams created by `sender`, paginated (max 100 per page).
    * Maps to `PaymentProcessor.get_sender_streams` on-chain.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
   async getSenderStreams(
     sender: string,
@@ -2978,9 +3163,10 @@ export class FluxapayClient {
     return raw.map((s) => fromContractStream(s as Parameters<typeof fromContractStream>[0]));
   }
 
-  /** Offline/hardware wallet payload builder utilities. */
-
-
+  /**
+   * Offline/hardware wallet payload builder utilities.
+   * @throws {FluxapayError} If the contract operation fails or returns an error.
+   */
   offlineSigner(): FluxapayOfflineSigner {
     return new FluxapayOfflineSigner(
       this.contract as import("./offline-signer.js").OfflineCapableClient,

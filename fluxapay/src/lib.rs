@@ -92,6 +92,8 @@ pub struct PaymentCharge {
     /// for tracing a payment back to its source link. `None` for payments created
     /// directly via `create_payment`/`swap_and_pay`.
     pub payment_link_id: Option<String>,
+    /// Issue #767: When true, allows funding the payment across multiple transactions.
+    pub allow_partial: Option<bool>,
     tip_enabled: false,
     tip_amount: None,
 }
@@ -426,6 +428,8 @@ pub enum Error {
     TrialTooLong = 71,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
+    /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
+    KycLimitExceeded = 71,
 }
 
 #[contracttype]
@@ -455,6 +459,8 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
+    /// Issue #767: Optional flag to allow partial payment accumulation.
+    pub allow_partial: Option<bool>,
         tip_enabled: false,
     }
 
@@ -7451,11 +7457,8 @@ impl PaymentProcessor {
                 crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
             match registry_client.try_get_merchant(&args.merchant_id) {
                 Ok(Ok(merchant)) => {
-                    // Require merchant to be verified (not Unverified), active, and not suspended
-                    if merchant.kyc_tier == crate::merchant_registry::KycTier::Unverified
-                        || !merchant.active
-                        || merchant.suspension_reason.is_some()
-                    {
+                    // Require merchant to be active and not suspended
+                    if !merchant.active || merchant.suspension_reason.is_some() {
                         return Err(Error::Unauthorized);
                     }
 
@@ -7481,6 +7484,25 @@ impl PaymentProcessor {
         }
 
         Self::enforce_amount_limits(&env, &args.merchant_id, args.amount)?;
+
+        // Issue #777: Enforce KYC tier limits (single-payment and monthly volume caps) via MerchantRegistry
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
+            match registry_client.try_check_kyc_limit(&args.merchant_id, &args.amount) {
+                Ok(Ok(())) => {}
+                Ok(Err(crate::merchant_registry::MerchantError::KycLimitExceeded)) => {
+                    return Err(Error::KycLimitExceeded);
+                }
+                _ => {
+                    return Err(Error::KycLimitExceeded);
+                }
+            }
+        }
 
         // Issue #393: Enforce KYC tier per-payment limit when merchant registry is configured
         if let Some(registry_address) = env
@@ -7597,6 +7619,7 @@ impl PaymentProcessor {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            allow_partial: args.allow_partial,
             tip_enabled: false,
             tip_amount: None,
         };
@@ -7882,6 +7905,7 @@ impl PaymentProcessor {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: args.allow_partial,
                 tip_enabled: false,
                 tip_amount: None,
             };
@@ -8249,14 +8273,20 @@ impl PaymentProcessor {
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::require_not_blacklisted(&env, &payment.merchant_id)?;
 
+        let is_partial_mode = payment.allow_partial.unwrap_or(false);
+
         // Issue #75: Enforce idempotent verify_payment - reject double verification
         // If payment is already Confirmed, return current status without error
         if payment.status == PaymentStatus::Confirmed {
             return Ok(payment.status);
         }
 
-        // Reject if payment is in any other terminal state
-        if payment.status != PaymentStatus::Pending {
+        // Reject if payment is in any terminal state, or if PartiallyPaid but partial mode is disabled
+        if payment.status == PaymentStatus::PartiallyPaid {
+            if !is_partial_mode {
+                return Err(Error::PaymentAlreadyProcessed);
+            }
+        } else if payment.status != PaymentStatus::Pending {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
@@ -8264,11 +8294,19 @@ impl PaymentProcessor {
             return Err(Error::PaymentExpired);
         }
 
+        let total_received = if is_partial_mode {
+            payment.amount_received.unwrap_or(0).saturating_add(amount_received)
+        } else {
+            amount_received
+        };
+
         // Record the actual amount received for reconciliation
-        payment.amount_received = Some(amount_received);
+        payment.amount_received = Some(total_received);
         payment.payer_address = Some(payer_address.clone());
         payment.transaction_hash = Some(transaction_hash);
-        payment.confirmed_at = Some(env.ledger().timestamp());
+        if total_received >= payment.amount {
+            payment.confirmed_at = Some(env.ledger().timestamp());
+        }
         // Issue #484: Store muxed ID if M-address was used
         payment.payer_muxed_id = payer_muxed_id;
 
@@ -8329,7 +8367,7 @@ impl PaymentProcessor {
         let max_tolerance = payment.amount / 100; // 1% of payment amount
         let tolerance = tolerance.min(max_tolerance);
 
-        let diff = amount_received - payment.amount;
+        let diff = total_received - payment.amount;
 
         let mut new_status = if (0..=tolerance).contains(&diff) {
             // Exact match or tiny overpay within tolerance → Confirmed
@@ -8384,10 +8422,23 @@ impl PaymentProcessor {
             _ => Symbol::new(&env, "FAILED"),
         };
         let overpaid_refund_amount = if new_status == PaymentStatus::Overpaid {
-            Some(amount_received.saturating_sub(payment.amount))
+            Some(total_received.saturating_sub(payment.amount))
         } else {
             None
         };
+
+        // Issue #767: If in partial mode and still partially paid, emit PAYMENT/PARTIAL_RECEIVED event
+        if is_partial_mode && new_status == PaymentStatus::PartiallyPaid {
+            let remaining = payment.amount.saturating_sub(total_received);
+            crate::events::emit_payment_partial_received(
+                &env,
+                &payment_id,
+                &payer_address,
+                amount_received,
+                total_received,
+                remaining,
+            );
+        }
 
         // Issue #471: Emit status-specific events for PartiallyPaid and Overpaid.
         if new_status == PaymentStatus::PartiallyPaid {
@@ -8412,7 +8463,7 @@ impl PaymentProcessor {
         }
 
         // Issue #162: Merchant-configurable partial payment policy.
-        if new_status == PaymentStatus::PartiallyPaid {
+        if new_status == PaymentStatus::PartiallyPaid && !is_partial_mode {
             let partial_allowed = if let Some(registry_address) = env
                 .storage()
                 .persistent()
@@ -8581,6 +8632,8 @@ impl PaymentProcessor {
         Ok(new_status)
     }
 
+    /// Issue #767: Confirm payment, supporting partial payment accumulation when `allow_partial = true`.
+    #[allow(deprecated)]
     /// Issue #763: Alias for verify_payment matching on-chain payment confirmation convention.
     /// Rejects confirmation if current ledger timestamp exceeds payment.expires_at, returning PaymentExpired.
     pub fn confirm_payment(
@@ -8786,6 +8839,7 @@ impl PaymentProcessor {
             retry_of_payment_id: Some(original_payment_id.clone()),
             payer_muxed_id: None,
             payment_link_id: original.payment_link_id.clone(),
+            allow_partial: original.allow_partial,
             tip_enabled: false,
             tip_amount: None,
         };
@@ -9010,11 +9064,16 @@ impl PaymentProcessor {
         result
     }
 
-    /// Issue #488: Permissionless public entry point for TTL maintenance.
-    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+    /// Issue #768: Permissionless function to allow anyone to extend a payment's TTL before it lapses.
+    pub fn bump_payment_ttl(env: Env, payment_id: String) -> Result<(), Error> {
         let payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::bump_payment_ttl(&env, &payment_id, &payment.status);
         Ok(())
+    }
+
+    /// Issue #488: Permissionless public entry point for TTL maintenance.
+    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+        Self::bump_payment_ttl(env, payment_id)
     }
 
     /// Issue #488: Bulk bump payment TTLs for efficient maintenance sweeps (max 50).
@@ -9321,7 +9380,7 @@ impl PaymentProcessor {
     pub fn expire_payment(env: Env, payment_id: String) -> Result<(), Error> {
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
 
-        if payment.status != PaymentStatus::Pending {
+        if payment.status != PaymentStatus::Pending && payment.status != PaymentStatus::PartiallyPaid {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
@@ -9350,6 +9409,40 @@ impl PaymentProcessor {
             ),
             (payment_id.clone(), payment.amount),
         );
+
+        // Issue #767: If the payment expires before being fully funded, refund partial amount to payer
+        let partial_received = payment.amount_received.unwrap_or(0);
+        if partial_received > 0 {
+            if let Some(ref payer_addr) = payment.payer_address {
+                let token_addr = payment
+                    .token_address
+                    .clone()
+                    .unwrap_or_else(|| Self::get_usdc_token(&env));
+                let refund_id = Self::generate_refund_id(&env, &payment_id);
+                let auto_refund_request = AutoRefundRequest {
+                    refund_id: refund_id.clone(),
+                    payment_id: payment_id.clone(),
+                    merchant_id: payment.merchant_id.clone(),
+                    payer_address: payer_addr.clone(),
+                    amount: partial_received,
+                    token_address: token_addr,
+                    reason: String::from_str(&env, "Partial payment expired - auto refunded"),
+                    requested_at: env.ledger().timestamp(),
+                    dispute_id: None,
+                    payer_muxed_id: payment.payer_muxed_id,
+                };
+                Self::push_auto_refund_request(&env, auto_refund_request);
+
+                crate::events::emit_refund_requested(
+                    &env,
+                    &refund_id,
+                    &payment_id,
+                    &payment.merchant_id,
+                    payer_addr,
+                    partial_received,
+                );
+            }
+        }
 
         Ok(())
     }
@@ -10405,6 +10498,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
+            allow_partial: None,
+        };
                 tip_enabled: false,
     };
 
@@ -10994,13 +11089,19 @@ impl PaymentProcessor {
             | PaymentStatus::Expired
             | PaymentStatus::Failed
             | PaymentStatus::PartiallyPaid
-            | PaymentStatus::Overpaid => LONG_LIVE_TTL,
+            | PaymentStatus::Overpaid => MIN_PERSISTENT_TTL,
         }
     }
 
     fn bump_payment_ttl(env: &Env, payment_id: &String, status: &PaymentStatus) {
         let key = DataKey::Payment(payment_id_to_key(env, payment_id));
-        Self::bump_ttl(env, &key, Self::payment_ttl(status));
+        let ttl = Self::payment_ttl(status);
+        let threshold = if ttl >= MIN_PERSISTENT_TTL {
+            MIN_BUMP_TTL
+        } else {
+            core::cmp::max(1, ttl / TTL_BUMP_THRESHOLD_DIVISOR)
+        };
+        env.storage().persistent().extend_ttl(&key, threshold, ttl);
     }
 
     fn bump_ttl(env: &Env, key: &DataKey, ttl: u32) {

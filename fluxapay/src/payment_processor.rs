@@ -1354,9 +1354,8 @@ impl PaymentProcessor {
                 crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
             match registry_client.try_get_merchant(&args.merchant_id) {
                 Ok(Ok(merchant)) => {
-                    // Require merchant to be verified (not Unverified), active, and not suspended
-                    if merchant.kyc_tier == crate::merchant_registry::KycTier::Unverified
-                        || !merchant.active
+                    // Require merchant to be active, and not suspended (Issue #777: Unverified allowed within tier 0 limits)
+                    if !merchant.active
                         || merchant.suspension_reason.is_some()
                     {
                         return Err(Error::Unauthorized);
@@ -1384,6 +1383,20 @@ impl PaymentProcessor {
         }
 
         Self::enforce_amount_limits(&env, &args.merchant_id, args.amount)?;
+
+        // Issue #777: Cross-call MerchantRegistry.check_kyc_limit before storing
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
+            match registry_client.try_check_kyc_limit(&args.merchant_id, &args.amount) {
+                Ok(Ok(())) => {}
+                _ => return Err(Error::KycLimitExceeded),
+            }
+        }
 
         // Issue #393: Enforce KYC tier per-payment limit when merchant registry is configured
         if let Some(registry_address) = env
@@ -1501,6 +1514,7 @@ impl PaymentProcessor {
             // Issue #841: persist expected muxed sub-account ID for confirm matching.
             payer_muxed_id: args.payer_muxed_id,
             payment_link_id: None,
+            allow_partial: args.allow_partial,
             tip_enabled: args.tip_enabled,
             tip_amount: None,
         };
@@ -1786,6 +1800,7 @@ impl PaymentProcessor {
                 retry_of_payment_id: None,
                 payer_muxed_id: args.payer_muxed_id,
                 payment_link_id: None,
+                allow_partial: args.allow_partial,
                 tip_enabled: args.tip_enabled,
                 tip_amount: None,
             };
@@ -2214,8 +2229,12 @@ impl PaymentProcessor {
             return Ok(payment.status);
         }
 
+        let allow_partial = payment.allow_partial.unwrap_or(false);
+
         // Reject if payment is in any other terminal state
-        if payment.status != PaymentStatus::Pending {
+        if payment.status != PaymentStatus::Pending
+            && (!allow_partial || payment.status != PaymentStatus::PartiallyPaid)
+        {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
@@ -2223,6 +2242,13 @@ impl PaymentProcessor {
             return Err(Error::PaymentExpired);
         }
 
+        // Issue #767: When allow_partial is true, accumulate received_amount across multiple calls
+        let total_received = if allow_partial {
+            let prior = payment.amount_received.unwrap_or(0);
+            prior.saturating_add(amount_received)
+        } else {
+            amount_received
+        };
         // Issue #841: if a muxed payer was specified at create time, the incoming
         // muxed sub-account ID must match. When no muxed payer was specified,
         // any payer (G- or M-address) is accepted.
@@ -2238,9 +2264,11 @@ impl PaymentProcessor {
         let payer_muxed_id = args.payer_muxed_id;
 
         // Record the actual amount received for reconciliation
-        payment.amount_received = Some(amount_received);
+        payment.amount_received = Some(total_received);
         payment.payer_address = Some(payer_address.clone());
         payment.transaction_hash = Some(transaction_hash);
+        // Issue #484: Store muxed ID if M-address was used
+        payment.payer_muxed_id = payer_muxed_id;
         payment.confirmed_at = Some(env.ledger().timestamp());
         // Issue #484 / #841: Store muxed ID if M-address was used (or keep expected)
         payment.payer_muxed_id = payer_muxed_id.or(payment.payer_muxed_id);
@@ -2302,7 +2330,7 @@ impl PaymentProcessor {
         let max_tolerance = payment.amount / 100; // 1% of payment amount
         let tolerance = tolerance.min(max_tolerance);
 
-        let diff = amount_received - payment.amount;
+        let diff = total_received - payment.amount;
 
         let mut new_status = if (0..=tolerance).contains(&diff) {
             // Exact match or tiny overpay within tolerance → Confirmed
@@ -2317,6 +2345,10 @@ impl PaymentProcessor {
             // Meaningfully less than expected → PartiallyPaid
             PaymentStatus::PartiallyPaid
         };
+
+        if new_status == PaymentStatus::Confirmed || new_status == PaymentStatus::Overpaid {
+            payment.confirmed_at = Some(env.ledger().timestamp());
+        }
 
         payment.status = new_status.clone();
 
@@ -2357,20 +2389,32 @@ impl PaymentProcessor {
             _ => Symbol::new(&env, "FAILED"),
         };
         let overpaid_refund_amount = if new_status == PaymentStatus::Overpaid {
-            Some(amount_received.saturating_sub(payment.amount))
+            Some(total_received.saturating_sub(payment.amount))
         } else {
             None
         };
 
+        // Issue #767: Emit PAYMENT/PARTIAL_RECEIVED event with cumulative and remaining amounts when allow_partial is true
+        if allow_partial && new_status == PaymentStatus::PartiallyPaid {
+            let remaining = payment.amount.saturating_sub(total_received);
+            crate::events::emit_payment_partial_received(
+                &env,
+                &payment_id,
+                &payment.merchant_id,
+                total_received,
+                remaining,
+            );
+        }
+
         // Issue #471: Emit status-specific events for PartiallyPaid and Overpaid.
-        if new_status == PaymentStatus::PartiallyPaid {
+        if new_status == PaymentStatus::PartiallyPaid && !allow_partial {
             env.events().publish(
                 (
                     Symbol::new(&env, "PAYMENT"),
                     Symbol::new(&env, "PARTIALLY_PAID"),
                     payment.merchant_id.clone(),
                 ),
-                (payment_id.clone(), payment.amount, amount_received),
+                (payment_id.clone(), payment.amount, total_received),
             );
         }
         if new_status == PaymentStatus::Overpaid {
@@ -2380,12 +2424,12 @@ impl PaymentProcessor {
                     Symbol::new(&env, "OVERPAID"),
                     payment.merchant_id.clone(),
                 ),
-                (payment_id.clone(), payment.amount, amount_received),
+                (payment_id.clone(), payment.amount, total_received),
             );
         }
 
         // Issue #162: Merchant-configurable partial payment policy.
-        if new_status == PaymentStatus::PartiallyPaid {
+        if new_status == PaymentStatus::PartiallyPaid && !allow_partial {
             let partial_allowed = if let Some(registry_address) = env
                 .storage()
                 .persistent()
@@ -2409,14 +2453,14 @@ impl PaymentProcessor {
                         Symbol::new(&env, "AUTO_REQUIRED"),
                         payment.merchant_id.clone(),
                     ),
-                    (payment_id.clone(), amount_received),
+                    (payment_id.clone(), total_received),
                 );
             }
         }
 
         // Issue #63: Enforce tier-based monthly volume cap before confirming payment.
         if new_status == PaymentStatus::Confirmed || new_status == PaymentStatus::Overpaid {
-            Self::enforce_tier_volume_cap(&env, &payment.merchant_id, amount_received)?;
+            Self::enforce_tier_volume_cap(&env, &payment.merchant_id, total_received)?;
         }
 
         // Issue #304: Check FX rate freshness when both registry and oracle address are configured
@@ -2554,6 +2598,8 @@ impl PaymentProcessor {
         Ok(new_status)
     }
 
+    /// Issue #767: Confirm payment, supporting partial payment accumulation when `allow_partial = true`.
+    #[allow(deprecated)]
     /// Issue #763: Alias for verify_payment matching on-chain payment confirmation convention.
     /// Rejects confirmation if current ledger timestamp exceeds payment.expires_at, returning PaymentExpired.
     pub fn confirm_payment(
@@ -2759,6 +2805,7 @@ impl PaymentProcessor {
             retry_of_payment_id: Some(original_payment_id.clone()),
             payer_muxed_id: None,
             payment_link_id: original.payment_link_id.clone(),
+            allow_partial: original.allow_partial,
             tip_enabled: original.tip_enabled,
             tip_amount: None,
         };
@@ -2983,11 +3030,16 @@ impl PaymentProcessor {
         result
     }
 
-    /// Issue #488: Permissionless public entry point for TTL maintenance.
-    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+    /// Issue #768: Permissionless function to allow anyone to extend a payment's TTL before it lapses.
+    pub fn bump_payment_ttl(env: Env, payment_id: String) -> Result<(), Error> {
         let payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::bump_payment_ttl(&env, &payment_id, &payment.status);
         Ok(())
+    }
+
+    /// Issue #488: Permissionless public entry point for TTL maintenance.
+    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+        Self::bump_payment_ttl(env, payment_id)
     }
 
     /// Issue #488: Bulk bump payment TTLs for efficient maintenance sweeps (max 50).
@@ -3309,13 +3361,16 @@ impl PaymentProcessor {
     pub fn expire_payment(env: Env, payment_id: String) -> Result<(), Error> {
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
 
-        if payment.status != PaymentStatus::Pending {
+        if payment.status != PaymentStatus::Pending && payment.status != PaymentStatus::PartiallyPaid {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
         if env.ledger().timestamp() <= payment.expires_at {
             return Err(Error::PaymentExpired);
         }
+
+        let was_partially_paid = payment.status == PaymentStatus::PartiallyPaid;
+        let partial_amount = payment.amount_received.unwrap_or(0);
 
         payment.status =
             payment_state_machine::transition_status(&payment.status, PaymentStatus::Expired)?;
@@ -3328,6 +3383,48 @@ impl PaymentProcessor {
         // Issue #399: free idempotency key so client_token can be reused.
         Self::remove_idempotency_key(&env, &payment_id);
         Self::remove_payment_from_expiry_bucket(&env, &payment_id, payment.expires_at);
+
+        // Issue #767: If the payment expires before being fully funded, refund partial amount to payer
+        if was_partially_paid && partial_amount > 0 {
+            if let Some(ref payer) = payment.payer_address {
+                if let Some(registry_address) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+                {
+                    let registry_client = crate::merchant_registry::MerchantRegistryClient::new(
+                        &env,
+                        &registry_address,
+                    );
+                    if let Some(refund_manager_address) = registry_client.get_refund_manager_address() {
+                        let refund_client = RefundManagerClient::new(&env, &refund_manager_address);
+                        refund_client.register_payment(
+                            &payment_id,
+                            &payment.merchant_id,
+                            &payment.amount,
+                            &payment.currency,
+                        );
+                        let auto_reason = String::from_str(&env, "Automatic refund for expired partial payment");
+                        let _ = refund_client.try_queue_auto_refund(
+                            &env.current_contract_address(),
+                            &registry_address,
+                            &payment_id,
+                            &partial_amount,
+                            payer,
+                            &auto_reason,
+                        );
+                    }
+                }
+                env.events().publish(
+                    (
+                        Symbol::new(&env, "REFUND"),
+                        Symbol::new(&env, "AUTO_REQUIRED"),
+                        payment.merchant_id.clone(),
+                    ),
+                    (payment_id.clone(), partial_amount),
+                );
+            }
+        }
 
         // Issue #166: Optimize event topics
         env.events().publish(
@@ -4465,6 +4562,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
+            allow_partial: None,
+        };
                 tip_enabled: false,
     };
 
@@ -4951,13 +5050,19 @@ impl PaymentProcessor {
             | PaymentStatus::Expired
             | PaymentStatus::Failed
             | PaymentStatus::PartiallyPaid
-            | PaymentStatus::Overpaid => LONG_LIVE_TTL,
+            | PaymentStatus::Overpaid => MIN_PERSISTENT_TTL,
         }
     }
 
     fn bump_payment_ttl(env: &Env, payment_id: &String, status: &PaymentStatus) {
         let key = DataKey::Payment(payment_id_to_key(env, payment_id));
-        Self::bump_ttl(env, &key, Self::payment_ttl(status));
+        let ttl = Self::payment_ttl(status);
+        let threshold = if ttl >= MIN_PERSISTENT_TTL {
+            MIN_BUMP_TTL
+        } else {
+            core::cmp::max(1, ttl / TTL_BUMP_THRESHOLD_DIVISOR)
+        };
+        env.storage().persistent().extend_ttl(&key, threshold, ttl);
     }
 
     fn bump_ttl(env: &Env, key: &DataKey, ttl: u32) {

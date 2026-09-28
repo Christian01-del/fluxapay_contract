@@ -41,6 +41,7 @@
     "test:unit": "tsx --test test/error-mapping.test.ts test/bulk-payment-status.test.ts test/error-localization.test.ts",
     "test:unit": "tsx --test test/error-mapping.test.ts test/bulk-payment-status.test.ts test/error-localization.test.ts test/receipt.test.ts",
     "check-error-map-sync": "tsx ../scripts/check-error-map-sync.ts",
+    "lint:jsdoc": "node ../scripts/lint-jsdoc.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

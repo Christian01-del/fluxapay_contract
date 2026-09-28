@@ -52,6 +52,35 @@ pub struct PaymentPartiallyPaid {
     pub amount_received: i128,
 }
 
+/// Issue #767: Emitted when a partial payment contribution is received.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct PaymentPartialReceived {
+    pub payment_id: String,
+    pub merchant_id: Address,
+    pub cumulative_amount: i128,
+    pub remaining_amount: i128,
+}
+
+/// Issue #767: Emit PAYMENT/PARTIAL_RECEIVED event with cumulative and remaining amounts.
+#[allow(deprecated)]
+pub fn emit_payment_partial_received(
+    env: &Env,
+    payment_id: &String,
+    merchant_id: &Address,
+    cumulative_amount: i128,
+    remaining_amount: i128,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "PAYMENT"),
+            Symbol::new(env, "PARTIAL_RECEIVED"),
+            merchant_id.clone(),
+        ),
+        (payment_id.clone(), cumulative_amount, remaining_amount),
+    );
+}
+
 /// Emitted when a payment is overpaid (amount above tolerance).
 #[contractevent]
 #[derive(Clone, Debug)]

@@ -47,6 +47,8 @@ pub struct PaymentCharge {
     pub payer_muxed_id: Option<u64>,
     /// Issue #668: ID of the payment link that created this payment via `use_link`
     pub payment_link_id: Option<String>,
+    /// Issue #767: When true, allows funding the payment across multiple transactions.
+    pub allow_partial: Option<bool>,
     /// Issue #844: Whether the merchant enabled an optional tip/gratuity on this payment.
     pub tip_enabled: bool,
     /// Issue #844: Tip/gratuity amount paid by the customer; stored separately from `amount`.
@@ -379,6 +381,8 @@ pub struct MuxedAccount {
     TrialTooLong = 71,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
+    /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
+    KycLimitExceeded = 71,
 }
 
 #[contracttype]
@@ -409,6 +413,8 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
+    /// Issue #767: Optional flag to allow partial payment accumulation.
+    pub allow_partial: Option<bool>,
     /// Issue #844: When true, customers may submit a tip via `confirm_payment`.
     pub tip_enabled: bool,
 }

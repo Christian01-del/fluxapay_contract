@@ -76,12 +76,13 @@ Fluxapay solves this by enabling _USDC-in → fiat-out_ payments with a merchant
 
 •⁠ ⁠*Merchant API for Seamless Integration*
 
-- Create payments/charges
+- Create payments/charges (with optional `allow_partial: true` for installment funding)
 - Fetch payment status
 - Issue refunds (where supported)
 - Manage customers & metadata
   - **Metadata limits:** ≤20 keys; each key ≤64 chars; each value ≤256 chars
   - Violations return `MetadataTooLarge` / `MetadataValueTooLong`
+- **Partial payment accumulation:** Allow customers to fund payments in multiple transactions. Emits `PAYMENT/PARTIAL_RECEIVED` events and automatically refunds partial funds on expiry.
   •⁠ ⁠*Webhooks*
 - ⁠ payment.created ⁠, ⁠ payment.pending ⁠, ⁠ payment.confirmed ⁠, ⁠ payment.failed ⁠, ⁠ payment.settled ⁠
 - Also: `refund.*` and `dispute.*` lifecycle events

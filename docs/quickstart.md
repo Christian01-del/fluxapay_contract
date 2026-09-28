@@ -108,7 +108,25 @@ const payment = await client.createPayment({
   depositAddress: "GABC...MERCHANT_DEPOSIT_ADDRESS",
   durationSecs: 3600n, // charge expires in 1 hour
 });
+
+// Issue #767: Partial Payments
+// Set allowPartial: true to let customers fund a payment across multiple transactions:
+const partialPayment = await client.createPayment({
+  paymentId: "payment_partial_001",
+  merchantId: "merchant_acme_001",
+  amount: 50_000_000n, // 5.00 USDC
+  currency: "USDC",
+  depositAddress: "GABC...MERCHANT_DEPOSIT_ADDRESS",
+  durationSecs: 7200n,
+  allowPartial: true, // Enables installment / multi-transaction funding
+});
 ```
+
+When `allowPartial: true` is set:
+- Customers can fund the payment in increments via `confirm_payment`.
+- Each increment emits a `PAYMENT/PARTIAL_RECEIVED` event with `(amount_received, total_received, remaining)`.
+- The payment transitions to `Confirmed` once `total_received >= amount`.
+- If the payment expires before reaching the required amount, all partially contributed funds are automatically refunded to the payer.
 
 ## 6. Share the payment link with your customer
 
