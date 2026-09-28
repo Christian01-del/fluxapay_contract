@@ -47,6 +47,10 @@ pub struct PaymentCharge {
     pub payer_muxed_id: Option<u64>,
     /// Issue #668: ID of the payment link that created this payment via `use_link`
     pub payment_link_id: Option<String>,
+    /// Issue #844: Whether the merchant enabled an optional tip/gratuity on this payment.
+    pub tip_enabled: bool,
+    /// Issue #844: Tip/gratuity amount paid by the customer; stored separately from `amount`.
+    pub tip_amount: Option<i128>,
 }
 
 #[contracttype]
@@ -64,6 +68,8 @@ pub struct VerifyPaymentArgs {
 pub struct PaymentSummary {
     pub payment_id: String,
     pub amount: i128,
+    /// Issue #844: Tip itemized separately from base `amount` for reconciliation.
+    pub tip_amount: i128,
     pub fee: i128,
     pub refund_amount: i128,
     pub status: PaymentStatus,
@@ -382,6 +388,22 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
+    /// Issue #844: When true, customers may submit a tip via `confirm_payment`.
+    pub tip_enabled: bool,
+}
+
+/// Issue #844: Arguments for confirming a payment with an optional tip.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfirmPaymentArgs {
+    pub payment_id: String,
+    pub transaction_hash: BytesN<32>,
+    pub payer_address: Address,
+    pub amount_received: i128,
+    /// Tip/gratuity on top of the base payment. Accepted only when
+    /// `PaymentCharge.tip_enabled` is true.
+    pub tip_amount: Option<i128>,
+    pub payer_muxed_id: Option<u64>,
 }
 
 /// Issue #771: Payment request item for `create_payment_batch`.
@@ -512,6 +534,15 @@ pub enum VoteChoice {
     Against,
 }
 
+/// Issue #843: Binary stake-weighted vote recorded by `cast_vote`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeWeightedVote {
+    pub choice: VoteChoice,
+    /// `stake_amount / VOTE_WEIGHT_UNIT` at the time of the vote.
+    pub vote_weight: i128,
+}
+
 /// Accumulated vote tally for a dispute.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -522,6 +553,18 @@ pub struct VoteTally {
     pub against_weight: i128,
     /// Number of arbitrators who have voted.
     pub vote_count: u32,
+    /// Issue #843: Sum of registered vote weights from `lock_stake`.
+    pub total_registered_weight: i128,
+}
+
+/// Issue #846: Pending WASM upgrade proposal with ledger-based timelock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasmUpgradeProposal {
+    pub new_wasm_hash: BytesN<32>,
+    /// Earliest ledger sequence at which `execute_upgrade` may run.
+    pub earliest_execute: u32,
+    pub proposed_by: Address,
 }
 
 /// Vote choice for the simple `ARBITRATOR`-role voting flow (as opposed to
@@ -548,7 +591,7 @@ pub struct ArbitratorVote {
 pub struct ArbitratorVoteTally {
     pub approve_count: u32,
     pub reject_count: u32,
-}
+        }
 
 /// Record of a single admin treasury withdrawal.
 #[contracttype]

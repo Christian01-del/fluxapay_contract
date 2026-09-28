@@ -118,6 +118,7 @@ fn create_payment_args(
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     }
 }
 
@@ -2951,6 +2952,7 @@ fn test_create_payment_idempotency_retry_returns_same_payment() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let first = client.create_payment(&args);
@@ -2992,6 +2994,7 @@ fn test_create_payment_idempotency_different_payment_id_fails() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     // First call succeeds
@@ -3036,6 +3039,7 @@ fn test_create_payment_without_idempotency_token_fails_on_retry() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     client.create_payment(&args);
@@ -5641,6 +5645,7 @@ fn test_merchant_payment_count_accurate_after_creates() {
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     });
 }
 
@@ -5676,6 +5681,7 @@ fn test_create_payment_future_expiry_accepted() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
@@ -5713,6 +5719,7 @@ fn test_create_payment_current_timestamp_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5751,6 +5758,7 @@ fn test_create_payment_past_expiry_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5786,6 +5794,7 @@ fn test_create_payment_duration_min_bound_enforced() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5821,6 +5830,7 @@ fn test_create_payment_duration_max_bound_enforced() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5858,6 +5868,7 @@ fn test_create_payment_valid_duration_within_bounds() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
@@ -5934,6 +5945,7 @@ fn test_create_payment_zero_amount_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -6079,6 +6091,7 @@ fn test_create_payment_negative_amount_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -6113,6 +6126,7 @@ fn test_create_payment_minimum_positive_amount_accepted() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
