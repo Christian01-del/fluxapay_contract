@@ -7,6 +7,7 @@ use crate::access_control::{role_admin, role_oracle, AccessControl};
 
 /// Maximum allowed age of a rate in seconds, regardless of admin-configured threshold.
 const MAX_RATE_AGE_SECS: u64 = 86_400; // 24 hours
+const MIN_RATE_AGE_SECS: u64 = 60;
 
 /// Maximum ledger sequence gap since last rate update (~24 h at ~5 s/ledger).
 const MAX_LEDGER_GAP: u32 = 17_280;
@@ -58,6 +59,7 @@ pub enum FXOracleError {
     /// Issue #636: Neither the requested `BASE_QUOTE` pair nor its inverse
     /// `QUOTE_BASE` has a stored rate (or the pair symbol is malformed).
     PairNotFound = 6,
+    InvalidStalenessThreshold = 7,
 }
 
 #[contracttype]
@@ -82,9 +84,10 @@ impl FXOracle {
 
     pub fn oracle_initialize(env: Env, admin: Address, staleness_threshold: u64) {
         AccessControl::initialize(&env, admin);
+        let threshold = staleness_threshold.clamp(MIN_RATE_AGE_SECS, MAX_RATE_AGE_SECS);
         env.storage()
             .instance()
-            .set(&OracleDataKey::StalenessThreshold, &staleness_threshold);
+            .set(&OracleDataKey::StalenessThreshold, &threshold);
     }
 
     pub fn oracle_grant_role(
@@ -570,10 +573,23 @@ impl FXOracle {
         admin: Address,
         threshold: u64,
     ) -> Result<(), FXOracleError> {
+        Self::set_max_staleness(env, admin, threshold)
+    }
+
+    /// Set the maximum accepted age of a rate in seconds.
+    pub fn set_max_staleness(
+        env: Env,
+        admin: Address,
+        threshold: u64,
+    ) -> Result<(), FXOracleError> {
         admin.require_auth();
 
         if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
             return Err(FXOracleError::Unauthorized);
+        }
+
+        if !(MIN_RATE_AGE_SECS..=MAX_RATE_AGE_SECS).contains(&threshold) {
+            return Err(FXOracleError::InvalidStalenessThreshold);
         }
 
         env.storage()

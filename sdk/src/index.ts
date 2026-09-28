@@ -129,6 +129,8 @@ export interface CreatePaymentParams {
   memoType?: string;
   tokenAddress?: string;
   clientToken?: string;
+  /** Optional 24-hour idempotency key for safely retrying payment creation. */
+  idempotencyKey?: string;
   /**
    * Optional payment metadata map.
    *
@@ -519,6 +521,7 @@ function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
     memo_type: params.memoType,
     token_address: params.tokenAddress,
     client_token: params.clientToken,
+    idempotency_key: params.idempotencyKey,
     metadata_hash: undefined,
     metadata: params.metadata,
     fee_waiver_code: params.feeWaiverCode,

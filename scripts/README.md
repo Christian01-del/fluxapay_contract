@@ -56,6 +56,7 @@ Operational scripts for deployment, SDK generation, local development, and CI ch
 | `FX_PAIRS` | No | `EUR,BRL,USD` | Comma list of `SYMBOL[:feedKey]`. Stored `Symbol` = units of that currency per 1 USD |
 | `FX_RATE_DECIMALS` | No | `7` | Fixed-point decimals for stored rates (contract convention is 7) |
 | `UPDATE_INTERVAL_MS` | No | `60000` | Poll interval in milliseconds |
+| `MAX_STALENESS_SECS` | No | `86400` | On-chain rate freshness window; warns and alerts at 80% of this age |
 | `MAX_FEED_RETRIES` | No | `3` | Feed fetch attempts per cycle before the cycle is skipped + alerted |
 | `FEED_RETRY_BACKOFF_MS` | No | `2000` | Base linear backoff between feed retries |
 | `STELLAR_RPC_URL` | No | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |

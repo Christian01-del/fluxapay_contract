@@ -365,6 +365,7 @@ fn test_unverified_merchant_cannot_create_payment() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     };
@@ -428,6 +429,7 @@ fn test_verified_merchant_can_create_payment() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     };
@@ -1357,6 +1359,7 @@ fn test_basic_tier_cap_enforced() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1383,6 +1386,7 @@ fn test_basic_tier_cap_enforced() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1430,6 +1434,7 @@ fn test_business_tier_no_cap() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1475,6 +1480,7 @@ fn test_volume_resets_next_month() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1504,6 +1510,7 @@ fn test_volume_resets_next_month() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1926,6 +1933,7 @@ fn test_non_whitelisted_payer_rejected() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });
@@ -1967,6 +1975,7 @@ fn test_whitelisted_payer_accepted() {
         memo_type: None,
         token_address: None,
         client_token: None,
+        idempotency_key: None,
         metadata_hash: None,
         metadata: None,
     });

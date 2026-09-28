@@ -21,6 +21,8 @@ const REFUND_EXPIRY_SECS: u64 = 30 * 24 * 60 * 60;
 /// Issue #638: TTL (in ledgers, ~5s each) for a stored refund idempotency key —
 /// 30 days, matching the payment `client_token` retention window.
 const REFUND_IDEMPOTENCY_TTL_LEDGERS: u32 = (30 * 24 * 60 * 60) / 5;
+/// Issue #761: TTL for a payment idempotency key (24 hours at 5s per ledger).
+const PAYMENT_IDEMPOTENCY_TTL_LEDGERS: u32 = (24 * 60 * 60) / 5;
 /// Issue #480: Minimum time between daily settlements (24 hours in seconds).
 const SETTLEMENT_DAILY_INTERVAL_SECS: u64 = 86_400;
 /// Issue #480: Minimum time between weekly settlements (7 days in seconds).
@@ -464,6 +466,8 @@ pub struct CreatePaymentArgs {
     pub memo_type: Option<String>,
     pub token_address: Option<Address>,
     pub client_token: Option<String>,
+    /// Optional idempotency key for safely retrying payment creation.
+    pub idempotency_key: Option<String>,
     pub metadata_hash: Option<BytesN<32>>,
     /// Arbitrary key-value metadata (max 20 keys, 256 chars per value).
     pub metadata: Option<Map<String, String>>,
@@ -1132,6 +1136,8 @@ pub enum DataKey {
     PendingTimelockAction(String),
     /// Issue #624: Counter for generating unique pending action IDs.
     TimelockActionCounter,
+    /// Issue #761: payment idempotency key → payment_id with a 24-hour TTL.
+    PaymentIdempotencyKey(String),
 }
 
 /// Default initial contract version string.
@@ -7178,6 +7184,20 @@ impl PaymentProcessor {
         Self::require_not_blacklisted(&env, &args.merchant_id)?;
         Self::require_not_blacklisted(&env, &args.deposit_address)?;
 
+        if let Some(ref key) = args.idempotency_key {
+            if key.len() > 128 {
+                return Err(Error::InputTooLong);
+            }
+            let storage_key = DataKey::PaymentIdempotencyKey(key.clone());
+            if let Some(existing_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&storage_key)
+            {
+                return Self::get_payment_internal(&env, &existing_id);
+            }
+        }
+
         // Idempotency check: if client_token was already used, return the existing payment
         // (or error if it maps to a different payment_id).
         if let Some(ref token) = args.client_token {
@@ -7194,6 +7214,14 @@ impl PaymentProcessor {
         // Verify that the merchant has the MERCHANT role (granted on verification)
         if !AccessControl::has_role(&env, &role_merchant(&env), &args.merchant_id) {
             return Err(Error::Unauthorized);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Payment(args.payment_id.clone()))
+        {
+            return Err(Error::PaymentAlreadyExists);
         }
 
         // Issue #164: Validate token against admin-approved allowlist
@@ -7283,14 +7311,6 @@ impl PaymentProcessor {
                     }
                 }
             }
-        }
-
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Payment(args.payment_id.clone()))
-        {
-            return Err(Error::PaymentAlreadyExists);
         }
 
         // Issue #489: Validate metadata_hash uniqueness
@@ -7444,6 +7464,14 @@ impl PaymentProcessor {
             let rev_key = DataKey::IdempotencyKey(rev_token_id);
             env.storage().persistent().set(&rev_key, &token);
             Self::bump_ttl(&env, &rev_key, ttl_ledgers);
+        }
+
+        if let Some(key) = args.idempotency_key {
+            let storage_key = DataKey::PaymentIdempotencyKey(key);
+            env.storage()
+                .persistent()
+                .set(&storage_key, &args.payment_id);
+            Self::bump_ttl(&env, &storage_key, PAYMENT_IDEMPOTENCY_TTL_LEDGERS);
         }
 
         Ok(payment)
@@ -9846,6 +9874,7 @@ impl PaymentProcessor {
             memo_type: None,
             token_address: Some(settlement_token),
             client_token: None,
+            idempotency_key: None,
             metadata_hash: None,
             metadata: None,
             fee_waiver_code: None,
@@ -9948,6 +9977,7 @@ impl PaymentProcessor {
             memo_type: None,
             token_address: Some(settlement_token),
             client_token: None,
+            idempotency_key: None,
             metadata_hash: None,
             metadata: None,
             fee_waiver_code: None,

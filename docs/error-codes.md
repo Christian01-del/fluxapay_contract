@@ -129,7 +129,9 @@ document on every CI run to catch drift between them.
 | 1 | `RateNotFound` | No rate is recorded for the requested currency pair. | Querying a pair the oracle hasn't been given a rate for. | Have the oracle publish a rate for that pair first. |
 | 2 | `RateStale` | The recorded rate is older than the staleness threshold. | Oracle hasn't updated the rate recently enough. | Wait for (or trigger) a fresh oracle update. |
 | 3 | `Unauthorized` | Caller is not an authorized oracle/admin. | Calling an oracle-only update function without the role. | Grant the oracle role, or call from an authorized address. |
-| 4 | `BatchTooLarge` **/** `RateDeviationExceeded` ⚠️ | Batch rate update exceeds the max of 20 pairs, **or** rate deviation exceeds the configured limit — both variants share code 4 in the source. | Submitting > 20 pairs in one batch update, or a rate too far from the previous value. | Split batch updates to ≤ 20 pairs; check deviation limits separately. |
+| 4 | `BatchTooLarge` | Batch rate update exceeds the max of 20 pairs. | Submitting > 20 pairs in one batch update. | Split batch updates to ≤ 20 pairs. |
+| 5 | `RateDeviationExceeded` | Rate deviation exceeds the configured limit. | Publishing a rate too far from the previous value. | Check the feed or adjust the pair's deviation limit. |
+| 7 | `InvalidStalenessThreshold` | Staleness threshold is outside the allowed 60-second to 24-hour range. | Setting a threshold below 60 seconds or above 86,400 seconds. | Use a threshold between 60 and 86,400 seconds. |
 
 ## `MerchantError` (`fluxapay/src/merchant_registry.rs`)
 

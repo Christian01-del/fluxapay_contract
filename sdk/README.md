@@ -42,6 +42,7 @@ async function main() {
     memoType: "Text",              // optional: Text | Id | Hash | Return
     tokenAddress: "C...",          // optional: custom token
     clientToken: "idempotency-key", // optional: idempotency key
+    idempotencyKey: "retry-key-123", // optional: 24-hour retry key
   });
 
   console.log("Payment created:", payment);
