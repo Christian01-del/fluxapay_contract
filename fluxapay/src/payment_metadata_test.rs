@@ -38,6 +38,7 @@ fn payment_args(
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     }
 }
 

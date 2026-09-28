@@ -133,7 +133,29 @@ go install github.com/rhysd/actionlint/cmd/actionlint@latest
 actionlint
 ```
 
+### WASM Size Regression Baseline (Issue #813)
 
+CI compares the built/optimized contract WASM against `.wasm-size-baseline`
+and **fails if the binary grows by more than 5%**.
+
+The baseline file contains a single integer: the size in **bytes** of the
+primary `fluxapay` WASM after `stellar contract optimize`.
+
+When a change legitimately increases WASM size (new feature, unavoidable
+growth), update the baseline in a **dedicated commit** with an explanation:
+
+```bash
+# After building + optimizing:
+SIZE=$(stat -c%s target/wasm32-unknown-unknown/release/fluxapay*.wasm | head -1)
+# or on macOS:
+# SIZE=$(stat -f%z target/wasm32-unknown-unknown/release/fluxapay.wasm)
+
+echo "$SIZE" > .wasm-size-baseline
+git add .wasm-size-baseline
+git commit -m "chore(ci): bump WASM size baseline to ${SIZE} after <reason>"
+```
+
+Do not silently raise the baseline in an unrelated feature commit.
 
 ## 4a. Pre-commit Hooks
 
@@ -218,6 +240,7 @@ Before marking a PR ready for review:
 
 - [ ] All tests pass (`make test`)
 - [ ] No new Clippy warnings (`cargo clippy --all-targets --all-features -- -D warnings`)
+- [ ] Automated CI security checks (`cargo-deny` and `cargo-audit`) pass (enforced via branch protection rules targeting `main`)
 - [ ] `CHANGELOG.md` updated under `## Unreleased` (or PR has the `skip-changelog` label for non-user-facing changes)
 - [ ] New features and bug fixes include tests
 - [ ] PR title follows Conventional Commits format

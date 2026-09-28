@@ -27,6 +27,29 @@ const client = new FluxapayClient({
 ```
 
 The browser import path is unchanged and unaffected by the `/node` entry.
+## Payment Receipts (Issue #816)
+
+After a payment is confirmed, generate a signed, shareable receipt:
+
+```ts
+const client = new FluxapayClient({
+  network: "testnet",
+  contractId: "C...",
+  platformSigningKey: process.env.FLUXAPAY_PLATFORM_SECRET!, // S...
+  platformPublicKey: process.env.FLUXAPAY_PLATFORM_PUBLIC,   // G... (optional)
+  receiptBaseUrl: "https://receipts.fluxapay.io",            // optional
+});
+
+const receipt = await client.generateReceipt(paymentId);
+// receipt.receipt_url → https://receipts.fluxapay.io/r/{payment_id}
+// receipt.proof → base64 Ed25519 signature over canonical fields
+
+import { verifyReceipt } from "@fluxapay/sdk";
+verifyReceipt(receipt, platformPublicKey); // pure, no network
+```
+
+**Receipt URL format:** `{receiptBaseUrl}/r/{payment_id}`  
+**Signed fields:** `payment_id`, `amount`, `merchant_name`, `confirmed_at`, `tx_hash`
 
 ## Release Notes
 
@@ -74,6 +97,55 @@ async function main() {
   const status = await client.getPayment("pay_123");
   console.log("Payment status:", status);
 }
+```
+
+## On-Chain Event Types & Parsing (Issue #765)
+
+The SDK exports typed interfaces for all on-chain events emitted across FluxaPay contracts, plus a `parseFluxapayEvent` helper that discriminates raw Soroban RPC or Horizon event streams into strongly typed events.
+
+```typescript
+import {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type PaymentCreatedEvent,
+  type RefundCompletedEvent,
+  type StreamWithdrawnEvent,
+} from "@fluxapay/sdk";
+
+// Listen to Horizon or Soroban RPC events
+for (const rawEvent of eventsFromRpc) {
+  const event: FluxapayEvent = parseFluxapayEvent(rawEvent);
+
+  switch (event.type) {
+    case "PAYMENT/CREATED":
+      // TypeScript automatically narrows payload to PaymentCreatedPayload
+      console.log(`Payment created: ${event.payload.payment_id} for ${event.payload.amount} stroops`);
+      break;
+
+    case "REFUND/COMPLETED":
+      console.log(`Refund ${event.payload.refund_id} completed: ${event.payload.refund_amount} stroops`);
+      break;
+
+    case "STREAM/WITHDRAWN":
+      console.log(`Stream ${event.payload.stream_id} withdrawn: ${event.payload.amount} (memo: ${event.payload.memo})`);
+      break;
+
+    case "ACCESS_CONTROL/ADMIN_TRANSFER_PROPOSED":
+      console.log(`Admin transfer proposed for ${event.payload.new_admin} at ledger ${event.payload.earliest_acceptance_ledger}`);
+      break;
+
+    default:
+      console.log(`Event: ${event.type}`, event.payload);
+  }
+}
+```
+
+You can also import from the dedicated `events` namespace:
+
+```typescript
+import { events } from "@fluxapay/sdk";
+
+const parsed = events.parseFluxapayEvent(rawEvent);
 ```
 
 ## Bulk payment status

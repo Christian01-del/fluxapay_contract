@@ -21,20 +21,37 @@ Typical triggers:
 
 ## 2) Dispute creation and required data
 
-A customer or buyer opens a dispute by calling `create_dispute`.
+A customer or buyer opens a dispute by calling `open_dispute` (or `create_dispute`).
 
 ### Required fields
 
 - `payment_id` — the original confirmed payment
 - `amount` — disputed amount, must be > 0 and <= payment amount
 - `reason` — short explanation
-- `evidence` — supporting documentation or proof
-- `disputer` — the address filing the dispute
+- `evidence` — supporting documentation, URL, or IPFS CID
+- `evidence_hash` — **SHA-256 of submitted evidence** (`BytesN<32>`), stored immutably on-chain
+- `disputer` / `opener` — the address filing the dispute
 - `payout_splits` — optional marketplace payout split configuration
+
+### Evidence integrity & on-chain hash verification (Issue #773)
+
+When a customer raises a dispute, evidence (documents, screenshots) is stored off-chain (or on IPFS). To prove that the retrieved evidence has not been tampered with after dispute submission, `open_dispute` stores the SHA-256 evidence hash (`BytesN<32>`) immutably on the `Dispute` record and includes it in the `DISPUTE/OPENED` event payload.
+
+Arbitrators, merchants, and observers can verify evidence integrity via the read-only view function:
+
+```bash
+stellar contract invoke \
+  --id $DISPUTE_CONTRACT_ID \
+  --network testnet \
+  -- verify_evidence \
+  --dispute_id 1
+```
+
+The returned 32-byte hex hash must match `sha256(downloaded_evidence_payload)`. The hash cannot be modified once set.
 
 ### Evidence format
 
-By default, non-empty evidence must be a valid IPFS CID (`CIDv0` or `CIDv1`). This protects the system from junk strings and makes evidence auditable.
+By default, non-empty evidence references must be valid URLs or IPFS CIDs (`CIDv0` or `CIDv1`). This protects the system from junk strings and makes evidence auditable.
 
 Examples:
 
@@ -61,15 +78,15 @@ This prevents spam disputes and ensures both parties have skin in the game. The 
 
 ```bash
 stellar contract invoke \
-  --id $REFUND_MANAGER_ID \
+  --id $DISPUTE_CONTRACT_ID \
   --network testnet \
   --source $TEST_CUSTOMER_ADDRESS \
-  -- create_dispute \
-  --payment_id "inv_20260329_001" \
-  --amount 1000000000 \
-  --reason "Item not received" \
-  --evidence "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG" \
-  --disputer $TEST_CUSTOMER_ADDRESS
+  -- open_dispute \
+  --opener $TEST_CUSTOMER_ADDRESS \
+  --payment_id 1001 \
+  --disputed_amount 1000000000 \
+  --bond_amount 20000000 \
+  --evidence_hash "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ```
 
 Expected result:
@@ -198,6 +215,61 @@ stellar contract invoke \
 If enough arbitrators vote the same way, the dispute is auto-resolved and emits `DISPUTE/AUTO_RESOLVED`.
 
 This is the simple `ARBITRATOR` flow. There are also stake-weighted voting paths for more advanced dispute resolution logic, but the role-gated `vote_dispute` flow is the merchant-facing, operator-friendly version.
+
+---
+
+## 5b) Stake-weighted arbitration voting (Issue #843)
+
+Equal one-address-one-vote arbitration is easy to game with many low-stake
+accounts. Weighted voting ties each arbitrator's influence to locked stake.
+
+### Mechanics
+
+1. Arbitrators call `lock_stake` with at least **`MIN_ARBITRATOR_STAKE`**
+   (= `VOTE_WEIGHT_UNIT` = **100 USDC** / `1_000_000_000` stroops).
+2. `vote_weight = stake_amount / VOTE_WEIGHT_UNIT` (integer division; 1 weight
+   per 100 USDC).
+3. `cast_vote` stores a binary choice plus that `vote_weight`.
+4. Resolution via `finalize_dispute_vote` requires one side's weighted votes to
+   exceed **`WEIGHTED_QUORUM_BPS`** of **total registered stake weight**
+   (default **5100 bps = 51%**). Raw vote counts are not used.
+5. Admins may retune the quorum with `set_weighted_quorum_bps`.
+
+### Minimum stake to participate
+
+| Constant | Default | Meaning |
+|---|---|---|
+| `VOTE_WEIGHT_UNIT` | 100 USDC | Stake that yields 1 vote weight |
+| `MIN_ARBITRATOR_STAKE` | = `VOTE_WEIGHT_UNIT` | Floor stake to lock / vote |
+| `WEIGHTED_QUORUM_BPS` | 5100 | Named admin-configurable quorum |
+
+Stakes below `MIN_ARBITRATOR_STAKE` are rejected by `lock_stake`. A small-stake
+arbitrator (1 weight) is outvoted by a large-stake arbitrator (e.g. 10 weight)
+when the large stake alone crosses the weighted quorum of total registered weight.
+
+### CLI example
+
+```bash
+# Lock 1000 USDC → 10 weight units
+stellar contract invoke \
+  --id $REFUND_MANAGER_ID \
+  --network testnet \
+  --source $ARBITRATOR_SECRET \
+  -- lock_stake \
+  --arbitrator $ARBITRATOR_ADDRESS \
+  --dispute_id "dispute_1" \
+  --token $USDC_TOKEN \
+  --amount 10000000000
+
+stellar contract invoke \
+  --id $REFUND_MANAGER_ID \
+  --network testnet \
+  --source $ARBITRATOR_SECRET \
+  -- cast_vote \
+  --arbitrator $ARBITRATOR_ADDRESS \
+  --dispute_id "dispute_1" \
+  --choice Favour
+```
 
 ---
 

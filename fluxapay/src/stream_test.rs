@@ -1129,4 +1129,95 @@ fn test_single_payee_create_stream_unchanged() {
     );
     assert_eq!(stream.receiver, receiver);
     assert_eq!(stream.stream_id, stream_id);
+#[test]
+fn test_pause_stream_snapshots_accrued_at_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, sender, receiver, token) = setup(&env);
+
+    let stream_id = String::from_str(&env, "pause_snapshot_01");
+    let rate = 10i128;
+    let deposit = 10_000i128;
+
+    client.create_stream(
+        &sender,
+        &receiver,
+        &token,
+        &rate,
+        &deposit,
+        &stream_id,
+        &None::<i128>,
+    );
+
+    // Advance 30 seconds
+    env.ledger().with_mut(|li| li.timestamp += 30);
+
+    // Pause stream
+    client.pause_stream(&sender, &stream_id);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Paused);
+    assert_eq!(stream.accrued_at_checkpoint, 300i128);
+    assert_eq!(stream.accrued_at_pause, 300i128);
+
+    // Wait 100 seconds while paused
+    env.ledger().with_mut(|li| li.timestamp += 100);
+
+    // Accrued amount must still be 300
+    let accrued_during_pause = client.get_accrued_amount(&stream_id);
+    assert_eq!(accrued_during_pause, 300i128);
+
+    // Resume stream
+    client.resume_stream(&sender, &stream_id);
+    let resumed_stream = client.get_stream(&stream_id);
+    assert_eq!(resumed_stream.status, StreamStatus::Active);
+    assert_eq!(resumed_stream.accrued_at_checkpoint, 300i128);
+    assert_eq!(resumed_stream.accrued_at_pause, 300i128);
+
+    // Advance 20 more seconds active
+    env.ledger().with_mut(|li| li.timestamp += 20);
+    let accrued_after_resume = client.get_accrued_amount(&stream_id);
+    // 300 baseline + 200 newly accrued = 500
+    assert_eq!(accrued_after_resume, 500i128);
+}
+
+#[test]
+fn test_stream_pause_resume_multiple_cycles_no_drift() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, sender, receiver, token) = setup(&env);
+
+    let stream_id = String::from_str(&env, "multi_cycle_stream");
+    let rate = 5i128;
+    let deposit = 100_000i128;
+
+    client.create_stream(
+        &sender,
+        &receiver,
+        &token,
+        &rate,
+        &deposit,
+        &stream_id,
+        &None::<i128>,
+    );
+
+    let mut total_active_seconds = 0u64;
+
+    // Run 50 pause/resume cycles
+    for _ in 0..50 {
+        // Active for 3 seconds
+        env.ledger().with_mut(|li| li.timestamp += 3);
+        total_active_seconds += 3;
+
+        client.pause_stream(&sender, &stream_id);
+
+        // Paused for 7 seconds (no accrual)
+        env.ledger().with_mut(|li| li.timestamp += 7);
+
+        client.resume_stream(&sender, &stream_id);
+    }
+
+    let accrued = client.get_accrued_amount(&stream_id);
+    let expected = (total_active_seconds as i128) * rate;
+    assert_eq!(accrued, expected);
 }

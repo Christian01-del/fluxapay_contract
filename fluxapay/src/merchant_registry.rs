@@ -253,6 +253,13 @@ pub struct SuspensionProposal {
     pub executed: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MerchantPage {
+    pub merchants: Vec<Merchant>,
+    pub next_cursor: Option<String>,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -270,6 +277,7 @@ pub enum MerchantError {
     ProposalNotFound = 9,
     ProposalExpired = 10,
     DuplicateVote = 11,
+    PageSizeTooLarge = 12,
 }
 
 #[cfg_attr(
@@ -1010,7 +1018,7 @@ impl MerchantRegistry {
 
         let mut merchant = Self::get_merchant_internal(&env, &merchant_id)?;
         merchant.active = false;
-        merchant.suspension_reason = Some(reason);
+        merchant.suspension_reason = Some(reason.clone());
         merchant.suspended_at = Some(env.ledger().timestamp());
         merchant.suspension_expires_at = Some(env.ledger().timestamp() + expiration_duration);
 
@@ -1212,6 +1220,92 @@ impl MerchantRegistry {
         }
 
         result
+    }
+
+    /// List registered merchants using cursor-based pagination (Issue #774).
+    ///
+    /// Limits page size to max 50 and returns next_cursor for seamless iteration
+    /// across pages without duplicate or missed merchants.
+    pub fn list_merchants(
+        env: Env,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MerchantPage, MerchantError> {
+        if limit > 50 {
+            return Err(MerchantError::PageSizeTooLarge);
+        }
+
+        let merchant_ids: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&MerchantDataKey::MerchantList)
+            .unwrap_or_else(|| vec![&env]);
+
+        if limit == 0 || merchant_ids.is_empty() {
+            return Ok(MerchantPage {
+                merchants: vec![&env],
+                next_cursor: None,
+            });
+        }
+
+        let total = merchant_ids.len();
+        let mut start_idx = 0u32;
+
+        if let Some(cursor_str) = cursor {
+            let len = cursor_str.len();
+            let mut num: u32 = 0;
+            let mut is_num = len > 0;
+            let mut slice = [0u8; 16];
+            if len <= 10 {
+                cursor_str.copy_into_slice(&mut slice[..len as usize]);
+                for b in &slice[..len as usize] {
+                    if *b >= b'0' && *b <= b'9' {
+                        num = num.saturating_mul(10).saturating_add((*b - b'0') as u32);
+                    } else {
+                        is_num = false;
+                        break;
+                    }
+                }
+                if is_num {
+                    start_idx = num;
+                }
+            }
+
+            if !is_num {
+                for (idx, m) in merchant_ids.iter().enumerate() {
+                    let m_str = m.to_string();
+                    if m_str == cursor_str {
+                        start_idx = (idx as u32).saturating_add(1);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut merchants = vec![&env];
+        let end_idx = core::cmp::min(total, start_idx.saturating_add(limit));
+
+        let mut i = start_idx;
+        while i < end_idx {
+            if let Some(merchant_id) = merchant_ids.get(i) {
+                if let Ok(mut merchant) = Self::get_merchant_internal(&env, &merchant_id) {
+                    merchant.bank_account = None;
+                    merchants.push_back(merchant);
+                }
+            }
+            i += 1;
+        }
+
+        let next_cursor = if end_idx < total {
+            Some(Self::u64_to_string(&env, end_idx as u64))
+        } else {
+            None
+        };
+
+        Ok(MerchantPage {
+            merchants,
+            next_cursor,
+        })
     }
 
     /// Get all verified merchants (kyc_tier != Unverified)

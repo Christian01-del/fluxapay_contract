@@ -82,12 +82,38 @@ jobs:
 
       - name: Check Documentation
         run: cargo doc --no-deps
+
+  # Job 2b: Supply Chain & Security (cargo-deny & cargo-audit)
+  cargo-deny:
+    name: Cargo Deny Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses advisories
+
+  cargo-audit:
+    name: Cargo Audit Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Security audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   # Job 3: Build the contract
   build:
     name: Build Contract
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [format, lint]
+    needs: [format, lint, cargo-deny, cargo-audit]
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -184,6 +210,50 @@ jobs:
           if [ "$failed" -eq 1 ]; then
             exit 1
           fi
+
+      # Issue #813: fail if primary WASM grows >5% vs committed baseline
+      - name: Check WASM size regression
+        run: |
+          BASELINE_FILE=".wasm-size-baseline"
+          if [ ! -f "$BASELINE_FILE" ]; then
+            echo "Missing $BASELINE_FILE — commit a baseline (see CONTRIBUTING.md)"
+            exit 1
+          fi
+          BASELINE=$(tr -d '[:space:]' < "$BASELINE_FILE")
+          if ! [[ "$BASELINE" =~ ^[0-9]+$ ]]; then
+            echo "Invalid baseline in $BASELINE_FILE: '$BASELINE'"
+            exit 1
+          fi
+          # Prefer optimized fluxapay.wasm; fall back to any release wasm.
+          WASM=""
+          for candidate in \
+            target/wasm32-unknown-unknown/release/fluxapay.optimized.wasm \
+            target/wasm32-unknown-unknown/release/fluxapay.wasm \
+            target/wasm32-unknown-unknown/release/*.wasm; do
+            if [ -f "$candidate" ]; then
+              WASM="$candidate"
+              break
+            fi
+          done
+          if [ -z "$WASM" ]; then
+            echo "No WASM artifact found under target/wasm32-unknown-unknown/release/"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM")
+          THRESHOLD=$(( BASELINE * 105 / 100 ))
+          echo "WASM: $WASM"
+          echo "Size: $SIZE bytes | Baseline: $BASELINE | 5% threshold: $THRESHOLD"
+          echo "### WASM Size Regression (Issue #813)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifact | Size | Baseline | Threshold (baseline×1.05) | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|------|----------|---------------------------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SIZE" -gt "$THRESHOLD" ]; then
+            echo "| $(basename "$WASM") | $SIZE | $BASELINE | $THRESHOLD | ❌ FAIL |" >> "$GITHUB_STEP_SUMMARY"
+            echo "WASM size $SIZE exceeds 5% baseline growth (baseline: $BASELINE, threshold: $THRESHOLD)"
+            exit 1
+          fi
+          echo "| $(basename "$WASM") | $SIZE | $BASELINE | $THRESHOLD | ✅ PASS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ WASM size within 5% of baseline"
 
   # Job 4: WASM Size Check
   wasm-size-check:

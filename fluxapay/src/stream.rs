@@ -79,6 +79,8 @@ pub struct PaymentStream {
     /// Accrual since the last checkpoint is calculated lazily:
     /// `total_accrued = accrued_at_checkpoint + (now - last_checkpoint_at) * rate_per_second`
     pub accrued_at_checkpoint: i128,
+    /// Accrued amount snapshotted at pause to prevent accounting drift on resume (Issue #772).
+    pub accrued_at_pause: i128,
     /// Stream lifecycle state.
     pub status: StreamStatus,
     /// When false, distributions (withdrawals) are locked until the sender
@@ -389,6 +391,7 @@ impl PaymentStreaming {
             remaining_deposit: deposit,
             last_checkpoint_at: now,
             accrued_at_checkpoint: 0,
+            accrued_at_pause: 0,
             status: StreamStatus::Active,
             milestones_approved: false,
         };
@@ -1096,13 +1099,14 @@ impl PaymentStreaming {
             return Err(StreamError::StreamNotActive);
         }
 
-        // Checkpoint accrued amount up to now before freezing.
+        // Checkpoint accrued amount up to now before freezing and snapshot at pause (Issue #772).
         let now = env.ledger().timestamp();
         let elapsed = now.saturating_sub(stream.last_checkpoint_at);
         let newly_accrued = (elapsed as i128)
             .saturating_mul(stream.rate_per_second)
-            .min(stream.remaining_deposit - stream.accrued_at_checkpoint);
+            .min(stream.remaining_deposit.saturating_sub(stream.accrued_at_checkpoint));
         stream.accrued_at_checkpoint = stream.accrued_at_checkpoint.saturating_add(newly_accrued);
+        stream.accrued_at_pause = stream.accrued_at_checkpoint;
         stream.last_checkpoint_at = now;
 
         stream.status = StreamStatus::Paused;
@@ -1142,7 +1146,8 @@ impl PaymentStreaming {
             return Err(StreamError::StreamNotPaused);
         }
 
-        // Reset checkpoint to now so accrual restarts from this moment.
+        // Carry accrued_at_pause forward as starting baseline so compute_total_accrued does not drift (Issue #772).
+        stream.accrued_at_checkpoint = stream.accrued_at_pause;
         stream.last_checkpoint_at = env.ledger().timestamp();
         stream.status = StreamStatus::Active;
 
