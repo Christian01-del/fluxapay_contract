@@ -11,7 +11,7 @@ import {
   type MaybeFeeConfig,
   type CreatePaymentArgs,
 } from "./contracts/fluxapay/src/index.js";
-import { Networks } from "@stellar/stellar-sdk";
+import { Networks, Keypair } from "@stellar/stellar-sdk";
 import {
   FluxapayOfflineSigner,
   type OfflineTransactionPayload,
@@ -74,6 +74,13 @@ import {
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from "./locales/index.js";
+import {
+  buildPaymentReceipt,
+  verifyReceipt as verifyReceiptProof,
+  DEFAULT_RECEIPT_BASE_URL,
+  type PaymentReceipt,
+} from "./receipt.js";
+
 
 export {
   DexRouterClient,
@@ -108,6 +115,22 @@ export interface FluxapayConfig {
    * when invoice methods are used.
    */
   apiUrl?: string;
+  /**
+   * Issue #816: Stellar secret key (S...) for the FluxaPay platform receipt
+   * signing key. Required for `generateReceipt`.
+   */
+  platformSigningKey?: string;
+  /**
+   * Issue #816: Platform Ed25519 public key (G...) used by `verifyReceipt`.
+   * Defaults to the public key derived from `platformSigningKey` when omitted.
+   */
+  platformPublicKey?: string;
+  /**
+   * Issue #816: Base URL for hosted receipt pages.
+   * Receipt URLs are `{receiptBaseUrl}/r/{payment_id}`.
+   * Default: `https://receipts.fluxapay.io`
+   */
+  receiptBaseUrl?: string;
 }
 
 /**
@@ -1684,6 +1707,110 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * Issue #816: Produce a signed, shareable payment receipt for a confirmed
+   * (or settled) payment. The `proof` field is an Ed25519 signature over the
+   * canonical receipt fields, verifiable offline with {@link verifyReceipt}.
+   *
+   * Receipt URL format: `{receiptBaseUrl}/r/{payment_id}`
+   * (default base `https://receipts.fluxapay.io`).
+   *
+   * Requires `platformSigningKey` in {@link FluxapayConfig}.
+   */
+  async generateReceipt(paymentId: string): Promise<PaymentReceipt> {
+    if (!this.config.platformSigningKey) {
+      throw new Error(
+        "platformSigningKey is required in FluxapayConfig to generate receipts.",
+      );
+    }
+
+    const raw = await this.getPayment(paymentId);
+    const payment = ((raw as { result?: unknown }).result ?? raw) as {
+      payment_id?: string;
+      amount?: bigint | number | string;
+      currency?: string;
+      merchant_id?: string;
+      confirmed_at?: bigint | number | string | null;
+      status?: { tag?: string } | string;
+      transaction_hash?: Buffer | Uint8Array | string | null;
+    };
+
+    const statusTag =
+      typeof payment.status === "string"
+        ? payment.status
+        : payment.status?.tag;
+    if (statusTag && statusTag !== "Confirmed" && statusTag !== "Settled") {
+      throw new Error(
+        `Payment ${paymentId} is not confirmed (status=${statusTag ?? "unknown"})`,
+      );
+    }
+
+    let merchantName = payment.merchant_id ?? "Unknown merchant";
+    try {
+      if (payment.merchant_id) {
+        const merchantRaw = await this.getMerchant(payment.merchant_id);
+        const merchant = ((merchantRaw as { result?: unknown }).result ?? merchantRaw) as {
+          business_name?: string;
+          businessName?: string;
+        };
+        merchantName =
+          merchant.business_name ?? merchant.businessName ?? merchantName;
+      }
+    } catch {
+      // Fall back to merchant_id when registry lookup is unavailable.
+    }
+
+    const confirmedRaw = payment.confirmed_at;
+    const confirmedAt =
+      confirmedRaw === null || confirmedRaw === undefined
+        ? new Date()
+        : typeof confirmedRaw === "bigint"
+          ? Number(confirmedRaw)
+          : confirmedRaw;
+
+    let txHash = "";
+    const th = payment.transaction_hash;
+    if (th == null) {
+      throw new Error(`Payment ${paymentId} has no transaction_hash`);
+    } else if (typeof th === "string") {
+      txHash = th.startsWith("0x") ? th.slice(2) : th;
+    } else {
+      txHash = Buffer.from(th).toString("hex");
+    }
+
+    return buildPaymentReceipt({
+      paymentId: payment.payment_id ?? paymentId,
+      amountStroops: payment.amount ?? 0n,
+      currency: payment.currency ?? "USDC",
+      merchantName,
+      confirmedAt,
+      txHash,
+      platformSecretKey: this.config.platformSigningKey,
+      receiptBaseUrl: this.config.receiptBaseUrl ?? DEFAULT_RECEIPT_BASE_URL,
+    });
+  }
+
+  /**
+   * Issue #816: Pure offline verification of a receipt `proof` against the
+   * FluxaPay platform public key. No network calls.
+   *
+   * Uses `platformPublicKey` from config, or derives it from
+   * `platformSigningKey` when only the secret is configured.
+   */
+  verifyReceipt(receipt: PaymentReceipt): boolean {
+    const publicKey =
+      this.config.platformPublicKey ??
+      (this.config.platformSigningKey
+        ? Keypair.fromSecret(this.config.platformSigningKey).publicKey()
+        : undefined);
+    if (!publicKey) {
+      throw new Error(
+        "platformPublicKey (or platformSigningKey) is required to verify receipts.",
+      );
+    }
+    return verifyReceiptProof(receipt, publicKey);
+  }
+
   async getPaymentStatusHistory(paymentId: string) {
     return withMappedContractError(() =>
       (this.contract as any).get_payment_status_history({ payment_id: paymentId }),
@@ -2690,6 +2817,18 @@ export {
   type AdminAction,
   type FeeSplitConfig,
 } from "./contracts/admin-ops.js";
+export {
+  verifyReceipt,
+  buildPaymentReceipt,
+  buildReceiptMessage,
+  buildReceiptUrl,
+  formatReceiptAmount,
+  signReceiptProof,
+  DEFAULT_RECEIPT_BASE_URL,
+  type PaymentReceipt,
+  type ReceiptSignedFields,
+  type BuildPaymentReceiptParams,
+} from "./receipt.js";
 
 // Issue #765: Export typed event payload interfaces, events namespace, and parseFluxapayEvent helper
 export * as events from "./events.js";

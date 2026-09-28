@@ -8,6 +8,30 @@ Official TypeScript SDK for interacting with FluxaPay's Soroban smart contracts 
 npm install @fluxapay/sdk
 ```
 
+## Payment Receipts (Issue #816)
+
+After a payment is confirmed, generate a signed, shareable receipt:
+
+```ts
+const client = new FluxapayClient({
+  network: "testnet",
+  contractId: "C...",
+  platformSigningKey: process.env.FLUXAPAY_PLATFORM_SECRET!, // S...
+  platformPublicKey: process.env.FLUXAPAY_PLATFORM_PUBLIC,   // G... (optional)
+  receiptBaseUrl: "https://receipts.fluxapay.io",            // optional
+});
+
+const receipt = await client.generateReceipt(paymentId);
+// receipt.receipt_url → https://receipts.fluxapay.io/r/{payment_id}
+// receipt.proof → base64 Ed25519 signature over canonical fields
+
+import { verifyReceipt } from "@fluxapay/sdk";
+verifyReceipt(receipt, platformPublicKey); // pure, no network
+```
+
+**Receipt URL format:** `{receiptBaseUrl}/r/{payment_id}`  
+**Signed fields:** `payment_id`, `amount`, `merchant_name`, `confirmed_at`, `tx_hash`
+
 ## Release Notes
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
