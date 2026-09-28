@@ -15,10 +15,13 @@
 //! All values are static upper-bound estimates based on the known structure of
 //! each operation. Actual costs may be lower depending on ledger state (e.g.
 //! TTL bumps that are no-ops, cache hits).
+//!
+//! Issue #835: all public entry points check the PaymentProcessor global pause
+//! flag and return `ContractPaused` while the system is paused.
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
 
 // ---------------------------------------------------------------------------
 // Fee schedule constants (Protocol 21 mainnet defaults)
@@ -161,6 +164,17 @@ pub struct CostEstimate {
     pub resource_fee_stroops: i64,
 }
 
+/// Errors returned by GasEstimator entry points.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum GasEstimatorError {
+    /// Estimator has not been linked to a PaymentProcessor via `initialize`.
+    NotInitialized = 1,
+    /// System is under a global emergency pause (Issue #835).
+    ContractPaused = 17,
+}
+
 // ---------------------------------------------------------------------------
 // Storage keys
 // ---------------------------------------------------------------------------
@@ -169,12 +183,15 @@ pub struct CostEstimate {
 ///
 /// Instance storage is transaction-scoped: entries written here are discarded
 /// when the invocation completes, so the cached balance can never leak into a
-/// subsequent transaction.
+/// subsequent transaction. Persistent keys (PaymentProcessor) survive across
+/// invocations.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     /// Cached token balance for the current transaction invocation.
     CachedBalance,
+    /// Address of the PaymentProcessor whose global pause flag is authoritative.
+    PaymentProcessor,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +203,39 @@ pub struct GasEstimator;
 
 #[contractimpl]
 impl GasEstimator {
+    /// Link this estimator to the PaymentProcessor that owns the global pause flag.
+    ///
+    /// Must be called once after deployment so entry points can honour emergency
+    /// pauses (Issue #835).
+    pub fn initialize(env: Env, payment_processor: Address) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::PaymentProcessor, &payment_processor);
+    }
+
+    /// Issue #835: reject the call when the linked PaymentProcessor is paused.
+    fn require_not_paused(env: &Env) -> Result<(), GasEstimatorError> {
+        let processor: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PaymentProcessor)
+            .ok_or(GasEstimatorError::NotInitialized)?;
+
+        let client = crate::PaymentProcessorClient::new(env, &processor);
+        if client.is_paused() {
+            return Err(GasEstimatorError::ContractPaused);
+        }
+        Ok(())
+    }
+
     /// Return the resource cost estimate for `op`.
-    pub fn estimate(_env: soroban_sdk::Env, op: Operation) -> CostEstimate {
+    pub fn estimate(env: Env, op: Operation) -> Result<CostEstimate, GasEstimatorError> {
+        Self::require_not_paused(&env)?;
+        Ok(Self::estimate_unchecked(op))
+    }
+
+    /// Internal estimate without the pause gate (used after a successful check).
+    fn estimate_unchecked(op: Operation) -> CostEstimate {
         let (instr, reads, writes, evts) = match op {
             Operation::CreatePayment => (
                 instructions::CREATE_PAYMENT,
@@ -311,15 +359,15 @@ impl GasEstimator {
     /// later transaction. Subsequent calls within the same invocation return the
     /// cached value instead of issuing another cross-contract call.
     ///
-    /// # Gas comparison (5-estimate batch)
-    ///
-    /// Without the cache, a batch of 5 estimates performs 5 cross-contract
-    /// `balance` calls. Each cross-contract invocation costs roughly
-    /// `FEE_PER_10K_INSTRUCTIONS * 30` (≈ 3 000 stroops) plus the token
-    /// contract's own ledger reads. With the cache, only the first estimate
-    /// pays that cost; the remaining 4 are served from instance storage,
-    /// eliminating ~4 cross-contract calls per batch.
-    pub fn estimate_payment_fee(env: soroban_sdk::Env, op: Operation) -> CostEstimate {
+    /// Issue #835: returns `ContractPaused` when the linked PaymentProcessor is
+    /// under a global emergency pause, preventing cross-contract balance reads
+    /// during incident response.
+    pub fn estimate_payment_fee(
+        env: Env,
+        op: Operation,
+    ) -> Result<CostEstimate, GasEstimatorError> {
+        Self::require_not_paused(&env)?;
+
         // Fetch the token balance at most once per transaction invocation.
         if env
             .storage()
@@ -333,16 +381,39 @@ impl GasEstimator {
                 .set(&DataKey::CachedBalance, &balance);
         }
 
-        Self::estimate(env, op)
+        Ok(Self::estimate_unchecked(op))
     }
 
     /// Read the token balance from the token contract.
     ///
     /// Kept as a separate helper so the cross-contract call site is explicit
     /// and the caching logic in [`Self::estimate_payment_fee`] stays readable.
-    fn fetch_token_balance(_env: &soroban_sdk::Env) -> i128 {
+    fn fetch_token_balance(_env: &Env) -> i128 {
         // The token client is resolved by the caller's environment; the
         // estimator only needs the value for liquidity assessment.
         0
+    }
+
+    /// Human-readable name for an operation (display helpers).
+    pub fn operation_name(env: Env, op: Operation) -> Result<Symbol, GasEstimatorError> {
+        Self::require_not_paused(&env)?;
+        Ok(match op {
+            Operation::CreatePayment => Symbol::new(&env, "CreatePayment"),
+            Operation::VerifyPayment => Symbol::new(&env, "VerifyPayment"),
+            Operation::CancelPayment => Symbol::new(&env, "CancelPayment"),
+            Operation::ExpirePayment => Symbol::new(&env, "ExpirePayment"),
+            Operation::SettlePayment => Symbol::new(&env, "SettlePayment"),
+            Operation::CreateRefund => Symbol::new(&env, "CreateRefund"),
+            Operation::ProcessRefund => Symbol::new(&env, "ProcessRefund"),
+            Operation::RejectRefund => Symbol::new(&env, "RejectRefund"),
+            Operation::CancelRefund => Symbol::new(&env, "CancelRefund"),
+            Operation::CreateDispute => Symbol::new(&env, "CreateDispute"),
+            Operation::ResolveDispute => Symbol::new(&env, "ResolveDispute"),
+            Operation::RejectDispute => Symbol::new(&env, "RejectDispute"),
+            Operation::SwapAndPay => Symbol::new(&env, "SwapAndPay"),
+            Operation::CreateStream => Symbol::new(&env, "CreateStream"),
+            Operation::WithdrawStream => Symbol::new(&env, "WithdrawStream"),
+            Operation::CancelStream => Symbol::new(&env, "CancelStream"),
+        })
     }
 }

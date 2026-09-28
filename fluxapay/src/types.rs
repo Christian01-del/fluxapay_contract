@@ -49,6 +49,10 @@ pub struct PaymentCharge {
     pub payment_link_id: Option<String>,
     /// Issue #767: When true, allows funding the payment across multiple transactions.
     pub allow_partial: Option<bool>,
+    /// Issue #844: Whether the merchant enabled an optional tip/gratuity on this payment.
+    pub tip_enabled: bool,
+    /// Issue #844: Tip/gratuity amount paid by the customer; stored separately from `amount`.
+    pub tip_amount: Option<i128>,
 }
 
 #[contracttype]
@@ -66,6 +70,8 @@ pub struct VerifyPaymentArgs {
 pub struct PaymentSummary {
     pub payment_id: String,
     pub amount: i128,
+    /// Issue #844: Tip itemized separately from base `amount` for reconciliation.
+    pub tip_amount: i128,
     pub fee: i128,
     pub refund_amount: i128,
     pub status: PaymentStatus,
@@ -353,6 +359,26 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
+    MuxedAccountMismatch = 70,
+}
+
+/// Issue #841: Muxed account (M-address) wrapping a G-address and 64-bit sub-account ID.
+///
+/// Stellar muxed accounts virtualise a single G-address into many sub-accounts by
+/// embedding a memo ID in the address. Merchants use this to route customer payments
+/// without managing multiple keypairs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MuxedAccount {
+    /// Underlying G-address (ed25519 public key).
+    pub account: Address,
+    /// 64-bit sub-account / memo ID embedded in the M-address.
+    pub id: u64,
+    /// Issue #836: Subscription is still in its free trial; no charge yet.
+    TrialActive = 70,
+    /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
+    TrialTooLong = 71,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
     /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
@@ -381,13 +407,51 @@ pub struct CreatePaymentArgs {
     pub fee_waiver_code: Option<String>,
     /// Issue #482: Payment ID of the original payment if this is a retry; None if original or not retried.
     pub retry_of_payment_id: Option<String>,
-    /// Issue #484: Muxed account ID from payer M-address; None for G-addresses or on-chain payments.
+    /// Issue #484 / #841: Muxed account ID from payer M-address; None for G-addresses
+    /// or when any payer is accepted. When set, verify/confirm requires a matching ID.
     pub payer_muxed_id: Option<u64>,
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
     /// Issue #767: Optional flag to allow partial payment accumulation.
     pub allow_partial: Option<bool>,
+    /// Issue #844: When true, customers may submit a tip via `confirm_payment`.
+    pub tip_enabled: bool,
+}
+
+/// Issue #844: Arguments for confirming a payment with an optional tip.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfirmPaymentArgs {
+    pub payment_id: String,
+    pub transaction_hash: BytesN<32>,
+    pub payer_address: Address,
+    pub amount_received: i128,
+    /// Tip/gratuity on top of the base payment. Accepted only when
+    /// `PaymentCharge.tip_enabled` is true.
+    pub tip_amount: Option<i128>,
+    pub payer_muxed_id: Option<u64>,
+}
+
+/// Issue #771: Payment request item for `create_payment_batch`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentRequest {
+    pub payment_id: String,
+    pub amount: i128,
+    pub currency: Symbol,
+    pub deposit_address: Address,
+    pub expires_at: Option<u64>,
+    pub duration_secs: Option<u64>,
+    pub memo: Option<String>,
+    pub memo_type: Option<String>,
+    pub token_address: Option<Address>,
+    pub client_token: Option<String>,
+    pub metadata_hash: Option<BytesN<32>>,
+    pub metadata: Option<Map<String, String>>,
+    pub fee_waiver_code: Option<String>,
+    pub payer: Option<Address>,
+    pub payer_muxed_id: Option<u64>,
 }
 
 /// Arguments for a single dispute in `batch_create_disputes` / `create_dispute`.
@@ -497,6 +561,15 @@ pub enum VoteChoice {
     Against,
 }
 
+/// Issue #843: Binary stake-weighted vote recorded by `cast_vote`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeWeightedVote {
+    pub choice: VoteChoice,
+    /// `stake_amount / VOTE_WEIGHT_UNIT` at the time of the vote.
+    pub vote_weight: i128,
+}
+
 /// Accumulated vote tally for a dispute.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -507,6 +580,18 @@ pub struct VoteTally {
     pub against_weight: i128,
     /// Number of arbitrators who have voted.
     pub vote_count: u32,
+    /// Issue #843: Sum of registered vote weights from `lock_stake`.
+    pub total_registered_weight: i128,
+}
+
+/// Issue #846: Pending WASM upgrade proposal with ledger-based timelock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasmUpgradeProposal {
+    pub new_wasm_hash: BytesN<32>,
+    /// Earliest ledger sequence at which `execute_upgrade` may run.
+    pub earliest_execute: u32,
+    pub proposed_by: Address,
 }
 
 /// Vote choice for the simple `ARBITRATOR`-role voting flow (as opposed to
@@ -533,7 +618,7 @@ pub struct ArbitratorVote {
 pub struct ArbitratorVoteTally {
     pub approve_count: u32,
     pub reject_count: u32,
-}
+        }
 
 /// Record of a single admin treasury withdrawal.
 #[contracttype]
@@ -696,6 +781,10 @@ pub struct Subscription {
     /// Affiliate fee in basis points (bps). If set and `affiliate` is Some,
     /// `affiliate_fee_bps / 10000` of each payment will be routed to the affiliate.
     pub affiliate_fee_bps: Option<u32>,
+    /// Issue #836: Ledger timestamp when the free trial ends. `None` if the
+    /// plan has no trial. While `now < trial_ends_at`, `charge_subscription`
+    /// returns `Error::TrialActive` and does not bill.
+    pub trial_ends_at: Option<u64>,
 }
 
 #[contracttype]
@@ -735,6 +824,9 @@ pub struct SubscriptionPlan {
     /// If non-empty, the plan amount will be distributed to the configured
     /// `SettlementSplit` recipients on each subscription charge.
     pub payout_splits: Vec<SettlementSplit>,
+    /// Issue #836: Optional free-trial length in days (max 90). When set,
+    /// subscribers are not charged until `trial_ends_at`.
+    pub trial_days: Option<u32>,
 }
 
 #[contracttype]

@@ -106,6 +106,7 @@ document on every CI run to catch drift between them.
 | 12 | `ProposalThresholdNotMet` | Not enough approvals to execute the proposal. | Executing a multi-sig admin action before quorum. | Collect additional approvals before executing. |
 | 13 | `PendingAdminTransfer` | An admin transfer is already pending. | Proposing a new transfer while one is in flight. | Wait for the pending transfer to complete or expire. |
 | 14 | `InvalidRecovery` | Recovery attempt failed validation. | Wrong recovery key or malformed recovery payload. | Retry with the correct registered recovery key. |
+| 15 | `UnknownRole` | Role symbol is not in the `KNOWN_ROLES` registry. | Granting/revoking a typo'd or invented role (e.g. `SETLMENT_OPERATOR`). | Use one of: `ADMIN`, `ORACLE`, `MERCHANT`, `SETTLEMENT_OPERATOR`, `ARBITRATOR`. |
 
 ## `StreamError` (`fluxapay/src/stream.rs`)
 

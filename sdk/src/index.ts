@@ -11,7 +11,7 @@ import {
   type MaybeFeeConfig,
   type CreatePaymentArgs,
 } from "./contracts/fluxapay/src/index.js";
-import { Networks } from "@stellar/stellar-sdk";
+import { Networks, Keypair } from "@stellar/stellar-sdk";
 import {
   FluxapayOfflineSigner,
   type OfflineTransactionPayload,
@@ -36,6 +36,11 @@ import {
 
 export { FLUXAPAY_CONTRACT_IDS, UNSET_CONTRACT_ID } from "./network-profiles.js";
 export type { FluxapayContractIds } from "./network-profiles.js";
+export {
+  verifyWebhookSignature,
+  parseWebhookSignatureHeader,
+  type ParsedWebhookSignature,
+} from "./webhooks.js";
 import { FxOracleClient } from "./contracts/fx-oracle.js";
 import {
   MerchantRegistryClient,
@@ -43,7 +48,9 @@ import {
   type AddCurrencyPayoutParams,
   type CurrencyPayout,
   type BankAccount,
+  type MerchantPage,
 } from "./contracts/merchant-registry.js";
+export type { MerchantPage };
 import {
   PaymentLinkManagerClient,
   type PaymentLinkManagerConfig,
@@ -67,6 +74,13 @@ import {
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from "./locales/index.js";
+import {
+  buildPaymentReceipt,
+  verifyReceipt as verifyReceiptProof,
+  DEFAULT_RECEIPT_BASE_URL,
+  type PaymentReceipt,
+} from "./receipt.js";
+
 
 export {
   DexRouterClient,
@@ -101,6 +115,30 @@ export interface FluxapayConfig {
    * when invoice methods are used.
    */
   apiUrl?: string;
+  /**
+   * Issue #840: Base URL of the FluxaPay indexer API used for reconciliation
+   * CSV downloads. Falls back to `apiUrl` when omitted.
+   */
+  indexerUrl?: string;
+   * Issue #839: Base URL of the FluxaPay indexer API. Used by
+   * `convertCurrency`. Falls back to `apiUrl` when unset.
+   */
+  indexerUrl?: string;
+   * Issue #816: Stellar secret key (S...) for the FluxaPay platform receipt
+   * signing key. Required for `generateReceipt`.
+   */
+  platformSigningKey?: string;
+  /**
+   * Issue #816: Platform Ed25519 public key (G...) used by `verifyReceipt`.
+   * Defaults to the public key derived from `platformSigningKey` when omitted.
+   */
+  platformPublicKey?: string;
+  /**
+   * Issue #816: Base URL for hosted receipt pages.
+   * Receipt URLs are `{receiptBaseUrl}/r/{payment_id}`.
+   * Default: `https://receipts.fluxapay.io`
+   */
+  receiptBaseUrl?: string;
 }
 
 /**
@@ -173,6 +211,48 @@ export interface CreatePaymentParams {
   feeWaiverCode?: string;
   /** Issue #767: When true, allows customers to fund this payment across multiple transactions. */
   allowPartial?: boolean;
+  /**
+   * Issue #841: Optional muxed payer as a Stellar M-address string.
+   * Decoded to the underlying G-address + 64-bit sub-account ID. When set,
+   * `verify_payment` only confirms if the incoming muxed ID matches.
+   */
+  muxedPayer?: string;
+  /**
+   * Issue #841: Optional muxed sub-account ID directly (alternative to `muxedPayer`).
+   */
+  payerMuxedId?: bigint;
+   * Issue #844: When true, checkout may collect an optional tip via
+   * `confirmPayment({ tipAmount })`.
+   */
+  tipEnabled?: boolean;
+}
+
+/**
+ * Issue #771: A single payment request item within a batch creation transaction.
+ */
+export interface PaymentRequest {
+  paymentId: string;
+  amount: bigint;
+  currency: string;
+  depositAddress: string;
+  expiresAt?: bigint;
+  durationSecs?: bigint;
+  memo?: string;
+  memoType?: string;
+  tokenAddress?: string;
+  clientToken?: string;
+  metadata?: Record<string, string>;
+  feeWaiverCode?: string;
+  payer?: string;
+  payerMuxedId?: bigint;
+}
+
+/**
+ * Issue #771: Parameters for creating a batch of up to 10 payments.
+ */
+export interface CreatePaymentBatchParams {
+  merchantId: string;
+  payments: PaymentRequest[];
 }
 
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
@@ -225,6 +305,8 @@ export interface SubscriptionPlan {
   intervalSecs: bigint;
   billingInterval: "Daily" | "Weekly" | "Monthly" | "Annually";
   active: boolean;
+  /** Issue #836: optional free-trial length in days (max 90). */
+  trialDays?: number | null;
 }
 
 /** Mirrors the on-chain `Subscription` struct in `fluxapay/src/types.rs`. */
@@ -247,6 +329,8 @@ export interface Subscription {
   resumeAt: bigint | null;
   affiliate: string | null;
   affiliateFeeBps: number | null;
+  /** Issue #836: ledger timestamp when free trial ends, if any. */
+  trialEndsAt?: bigint | null;
 }
 
 export interface CreatePlanParams {
@@ -257,6 +341,8 @@ export interface CreatePlanParams {
   amount: bigint;
   currency: string;
   billingInterval: SubscriptionPlan["billingInterval"];
+  /** Issue #836: optional free-trial length in days (max 90). */
+  trialDays?: number;
 }
 
 export interface SubscribeParams {
@@ -286,6 +372,7 @@ function fromContractSubscription(raw: {
   resume_at?: bigint | null;
   affiliate?: string | null;
   affiliate_fee_bps?: number | null;
+  trial_ends_at?: bigint | null;
 }): Subscription {
   return {
     subscriptionId: raw.subscription_id,
@@ -306,6 +393,7 @@ function fromContractSubscription(raw: {
     resumeAt: raw.resume_at ?? null,
     affiliate: raw.affiliate ?? null,
     affiliateFeeBps: raw.affiliate_fee_bps ?? null,
+    trialEndsAt: raw.trial_ends_at ?? null,
   };
 }
 
@@ -565,6 +653,9 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   69: "InvalidEvidenceCid",
   70: "InvalidPaymentLink",
   71: "KycLimitExceeded",
+  70: "MuxedAccountMismatch",
+  70: "TrialActive",
+  71: "TrialTooLong",
   404: "PaymentNotFound",
   405: "RefundNotFound",
   406: "InvalidAmount",
@@ -775,6 +866,11 @@ export async function withMappedContractError<T>(
 }
 
 function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
+  let payerMuxedId: bigint | undefined = params.payerMuxedId;
+  if (params.muxedPayer) {
+    const decoded = decodeMuxedAddress(params.muxedPayer);
+    payerMuxedId = decoded.id;
+  }
   return {
     payment_id: params.paymentId,
     merchant_id: params.merchantId,
@@ -791,6 +887,64 @@ function toCreatePaymentArgs(params: CreatePaymentParams): CreatePaymentArgs {
     metadata: params.metadata,
     fee_waiver_code: params.feeWaiverCode,
     allow_partial: params.allowPartial,
+    payer_muxed_id: payerMuxedId,
+  };
+}
+
+/**
+ * Issue #841: Encode a G-address + sub-account ID into a Stellar M-address.
+ */
+export function encodeMuxedAddress(gAddress: string, id: bigint | number | string): string {
+  const { StrKey } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
+  if (!gAddress.startsWith("G")) {
+    throw new Error(`encodeMuxedAddress expects a G-address, got: ${gAddress}`);
+  }
+  const pubkey: Buffer = StrKey.decodeEd25519PublicKey(gAddress);
+  const idBuf = Buffer.alloc(8);
+  idBuf.writeBigUInt64BE(BigInt(id));
+  // Muxed account binary: 0x00 discriminant? Stellar uses 0x60 for muxed med25519 in StrKey.
+  // Prefer SDK encodeMuxedAccount when available.
+  if (typeof (StrKey as any).encodeMuxedAccount === "function") {
+    const payload = Buffer.alloc(40);
+    idBuf.copy(payload, 0);
+    pubkey.copy(payload, 8);
+    return (StrKey as any).encodeMuxedAccount(payload);
+  }
+  // Fallback via MuxedAccount class
+  const { MuxedAccount, Keypair } = require("@stellar/stellar-sdk");
+  const kp = Keypair.fromPublicKey(gAddress);
+  const account = { accountId: () => kp.publicKey() };
+  const muxed = new MuxedAccount(account, String(id));
+  return muxed.accountId();
+}
+
+/**
+ * Issue #841: Decode a Stellar M-address into its G-address and 64-bit sub-account ID.
+ */
+export function decodeMuxedAddress(mAddress: string): { gAddress: string; id: bigint } {
+  if (!mAddress) {
+    throw new Error("Invalid muxed address: empty");
+  }
+  if (mAddress.startsWith("G")) {
+    return { gAddress: mAddress, id: 0n };
+  }
+  if (!mAddress.startsWith("M")) {
+    throw new Error(`Invalid muxed address: ${mAddress}`);
+  }
+  const { StrKey } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
+  if (typeof (StrKey as any).decodeMuxedAccount === "function") {
+    const decoded: Buffer = (StrKey as any).decodeMuxedAccount(mAddress);
+    // decoded is 40 bytes: 8-byte id + 32-byte ed25519 pubkey
+    const id = decoded.readBigUInt64BE(0);
+    const gAddress = StrKey.encodeEd25519PublicKey(decoded.subarray(8, 40));
+    return { gAddress, id };
+  }
+  const { MuxedAccount } = require("@stellar/stellar-sdk");
+  const muxed = MuxedAccount.fromAddress(mAddress, "0");
+  return {
+    gAddress: muxed.baseAccount().accountId(),
+    id: BigInt(muxed.id),
+    tip_enabled: params.tipEnabled ?? false,
   };
 }
 
@@ -951,6 +1105,49 @@ export class FluxapayClient {
   }
 
   /**
+   * Issue #771: Create up to 10 payment charges atomically in a single transaction.
+   * Wraps the `create_payment_batch` contract entry point.
+   */
+  async createPaymentBatch(params: CreatePaymentBatchParams): Promise<string[]> {
+    if (params.payments.length > 10) {
+      throw new FluxapayError(39, "BatchTooLarge", "createPaymentBatch accepts a maximum of 10 items per batch");
+    }
+    return withMappedContractError(async () => {
+      const result = await (this.contract as any).create_payment_batch({
+        merchant_id: params.merchantId,
+        payments: params.payments.map((p) => ({
+          payment_id: p.paymentId,
+          amount: p.amount,
+          currency: p.currency,
+          deposit_address: p.depositAddress,
+          expires_at: p.expiresAt,
+          duration_secs: p.durationSecs,
+          memo: p.memo,
+          memo_type: p.memoType,
+          token_address: p.tokenAddress,
+          client_token: p.clientToken,
+          metadata_hash: undefined,
+          metadata: p.metadata,
+          fee_waiver_code: p.feeWaiverCode,
+          payer: p.payer,
+          payer_muxed_id: p.payerMuxedId,
+        })),
+      });
+      return (result as any)?.result ?? result;
+    });
+  }
+
+  /**
+   * Issue #763: Permissionlessly expire a pending payment whose TTL has elapsed.
+   * Returns PaymentExpired error if the payment has not yet expired.
+   */
+  async expirePayment(paymentId: string): Promise<void> {
+    return withMappedContractError(async () => {
+      await (this.contract as any).expire_payment({ payment_id: paymentId });
+    });
+  }
+
+  /**
    * Issue #856: Executes a token swap via DexRouter with slippage tolerance and max_slippage_bps guards.
    * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
@@ -1015,6 +1212,34 @@ export class FluxapayClient {
    * verifyPaymentBatch
    * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
+   * Issue #844: Confirm a payment (checkout flow), optionally with a tip.
+   * `tipAmount` is only accepted when the payment was created with
+   * `tipEnabled: true`. Tip is stored separately from base `amount`.
+   */
+  async confirmPayment(params: {
+    oracle: string;
+    paymentId: string;
+    transactionHash: Buffer;
+    payerAddress: string;
+    amountReceived: bigint;
+    tipAmount?: bigint;
+    payerMuxedId?: bigint;
+  }) {
+    return withMappedContractError(() =>
+      (this.contract as any).confirm_payment({
+        oracle: params.oracle,
+        args: {
+          payment_id: params.paymentId,
+          transaction_hash: params.transactionHash,
+          payer_address: params.payerAddress,
+          amount_received: params.amountReceived,
+          tip_amount: params.tipAmount,
+          payer_muxed_id: params.payerMuxedId,
+        },
+      }),
+    );
+  }
+
   async verifyPaymentBatch(params: {
     operator: string;
     verifications: Array<{
@@ -1517,6 +1742,71 @@ export class FluxapayClient {
   }
 
   /**
+   * Open a dispute with on-chain SHA-256 evidence hash verification (Issue #773).
+   * Accepts an optional evidenceHash (hex string, auto-decoded to 32 bytes).
+   */
+  async openDispute(params: {
+    paymentId: string | number;
+    amount: bigint | number;
+    reason?: string;
+    evidence?: string;
+    disputer?: string;
+    opener?: string;
+    evidenceHash?: string | Buffer | Uint8Array;
+    bondAmount?: bigint | number;
+  }) {
+    let hashBuf: Buffer;
+    if (params.evidenceHash) {
+      if (typeof params.evidenceHash === "string") {
+        hashBuf = Buffer.from(params.evidenceHash.replace(/^0x/, ""), "hex");
+      } else {
+        hashBuf = Buffer.from(params.evidenceHash);
+      }
+    } else {
+      const { createHash } = await import("node:crypto");
+      hashBuf = createHash("sha256").update(params.evidence ?? "").digest();
+    }
+
+    if (hashBuf.length !== 32) {
+      throw new Error(`evidenceHash must be 32 bytes (got ${hashBuf.length})`);
+    }
+
+    const caller = params.disputer || params.opener || "";
+    return withMappedContractError(async () => {
+      if (typeof (this.contract as any).open_dispute === "function") {
+        return (this.contract as any).open_dispute({
+          opener: caller,
+          payment_id: typeof params.paymentId === "number" ? BigInt(params.paymentId) : params.paymentId,
+          disputed_amount: BigInt(params.amount),
+          bond_amount: BigInt(params.bondAmount ?? 0),
+          evidence_hash: hashBuf,
+        });
+      }
+      return this.contract.create_dispute({
+        payment_id: String(params.paymentId),
+        amount: BigInt(params.amount),
+        reason: params.reason ?? "",
+        evidence: params.evidence ?? "",
+        disputer: caller,
+        evidence_hash: hashBuf,
+      });
+    });
+  }
+
+  /**
+   * Read-only view function to retrieve the stored SHA-256 evidence hash for a dispute (Issue #773).
+   */
+  async verifyEvidence(disputeId: string | number): Promise<string> {
+    return withMappedContractError(async () => {
+      const res = await (this.contract as any).verify_evidence({
+        dispute_id: typeof disputeId === "number" ? BigInt(disputeId) : disputeId,
+      });
+      const val = (res as { result?: any }).result ?? res;
+      return Buffer.from(val).toString("hex");
+    });
+  }
+
+  /**
    * Move a dispute to under-review status
    * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
@@ -1646,6 +1936,109 @@ export class FluxapayClient {
    * getPaymentStatusHistory
    * @throws {FluxapayError} If the contract operation fails or returns an error.
    */
+   * Issue #816: Produce a signed, shareable payment receipt for a confirmed
+   * (or settled) payment. The `proof` field is an Ed25519 signature over the
+   * canonical receipt fields, verifiable offline with {@link verifyReceipt}.
+   *
+   * Receipt URL format: `{receiptBaseUrl}/r/{payment_id}`
+   * (default base `https://receipts.fluxapay.io`).
+   *
+   * Requires `platformSigningKey` in {@link FluxapayConfig}.
+   */
+  async generateReceipt(paymentId: string): Promise<PaymentReceipt> {
+    if (!this.config.platformSigningKey) {
+      throw new Error(
+        "platformSigningKey is required in FluxapayConfig to generate receipts.",
+      );
+    }
+
+    const raw = await this.getPayment(paymentId);
+    const payment = ((raw as { result?: unknown }).result ?? raw) as {
+      payment_id?: string;
+      amount?: bigint | number | string;
+      currency?: string;
+      merchant_id?: string;
+      confirmed_at?: bigint | number | string | null;
+      status?: { tag?: string } | string;
+      transaction_hash?: Buffer | Uint8Array | string | null;
+    };
+
+    const statusTag =
+      typeof payment.status === "string"
+        ? payment.status
+        : payment.status?.tag;
+    if (statusTag && statusTag !== "Confirmed" && statusTag !== "Settled") {
+      throw new Error(
+        `Payment ${paymentId} is not confirmed (status=${statusTag ?? "unknown"})`,
+      );
+    }
+
+    let merchantName = payment.merchant_id ?? "Unknown merchant";
+    try {
+      if (payment.merchant_id) {
+        const merchantRaw = await this.getMerchant(payment.merchant_id);
+        const merchant = ((merchantRaw as { result?: unknown }).result ?? merchantRaw) as {
+          business_name?: string;
+          businessName?: string;
+        };
+        merchantName =
+          merchant.business_name ?? merchant.businessName ?? merchantName;
+      }
+    } catch {
+      // Fall back to merchant_id when registry lookup is unavailable.
+    }
+
+    const confirmedRaw = payment.confirmed_at;
+    const confirmedAt =
+      confirmedRaw === null || confirmedRaw === undefined
+        ? new Date()
+        : typeof confirmedRaw === "bigint"
+          ? Number(confirmedRaw)
+          : confirmedRaw;
+
+    let txHash = "";
+    const th = payment.transaction_hash;
+    if (th == null) {
+      throw new Error(`Payment ${paymentId} has no transaction_hash`);
+    } else if (typeof th === "string") {
+      txHash = th.startsWith("0x") ? th.slice(2) : th;
+    } else {
+      txHash = Buffer.from(th).toString("hex");
+    }
+
+    return buildPaymentReceipt({
+      paymentId: payment.payment_id ?? paymentId,
+      amountStroops: payment.amount ?? 0n,
+      currency: payment.currency ?? "USDC",
+      merchantName,
+      confirmedAt,
+      txHash,
+      platformSecretKey: this.config.platformSigningKey,
+      receiptBaseUrl: this.config.receiptBaseUrl ?? DEFAULT_RECEIPT_BASE_URL,
+    });
+  }
+
+  /**
+   * Issue #816: Pure offline verification of a receipt `proof` against the
+   * FluxaPay platform public key. No network calls.
+   *
+   * Uses `platformPublicKey` from config, or derives it from
+   * `platformSigningKey` when only the secret is configured.
+   */
+  verifyReceipt(receipt: PaymentReceipt): boolean {
+    const publicKey =
+      this.config.platformPublicKey ??
+      (this.config.platformSigningKey
+        ? Keypair.fromSecret(this.config.platformSigningKey).publicKey()
+        : undefined);
+    if (!publicKey) {
+      throw new Error(
+        "platformPublicKey (or platformSigningKey) is required to verify receipts.",
+      );
+    }
+    return verifyReceiptProof(receipt, publicKey);
+  }
+
   async getPaymentStatusHistory(paymentId: string) {
     return withMappedContractError(() =>
       (this.contract as any).get_payment_status_history({ payment_id: paymentId }),
@@ -2031,6 +2424,116 @@ export class FluxapayClient {
     return this.config.apiUrl.replace(/\/$/, "");
   }
 
+  private getIndexerUrl(): string {
+    const url = this.config.indexerUrl || this.config.apiUrl;
+    if (!url) {
+      throw new Error(
+        "indexerUrl (or apiUrl) is required in FluxapayConfig to download reports.",
+      );
+    }
+    return url.replace(/\/$/, "");
+  }
+
+  /**
+   * Issue #840: Download a merchant reconciliation CSV for `[from, to]` and
+   * write it to a Node.js writable stream (e.g. `fs.createWriteStream`).
+   *
+   * Requires a SEP-10 JWT whose `sub` is the merchant account.
+   */
+  async downloadReconciliationReport(params: {
+    from: string;
+    to: string;
+    token: string;
+    /** Node.js Writable stream (or any object with `write`/`end`). */
+    dest: { write: (chunk: string | Buffer) => boolean; end: () => void; once?: (event: string, cb: () => void) => void };
+  }): Promise<void> {
+    const url =
+      `${this.getIndexerUrl()}/v1/reports/reconciliation` +
+      `?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: "text/csv",
+        Authorization: `Bearer ${params.token}`,
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Failed to download reconciliation report: ${res.status} ${body}`,
+      );
+    }
+
+    // Prefer streaming the body when available (Node undici / modern fetch).
+    const body = res.body as any;
+    if (body && typeof body.getReader === "function") {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+        if (!params.dest.write(chunk) && params.dest.once) {
+          await new Promise<void>((resolve) => params.dest.once!("drain", resolve));
+        }
+      }
+      params.dest.end();
+      return;
+    }
+
+    const text = await res.text();
+    params.dest.write(text);
+    params.dest.end();
+  }
+
+  /**
+   * Issue #839: Resolve the indexer base URL for public FX preview calls.
+   */
+  private getIndexerUrl(): string {
+    const base = this.config.indexerUrl || this.config.apiUrl;
+    if (!base) {
+      throw new Error(
+        "indexerUrl (or apiUrl) is required in FluxapayConfig to use convertCurrency.",
+      );
+    }
+    return base.replace(/\/$/, "");
+  }
+
+  /**
+   * Issue #839: Preview a USDC→fiat conversion at the indexer's cached
+   * oracle rate without creating a payment.
+   *
+   * @param params.from - Source currency (typically "USDC")
+   * @param params.to - Destination fiat currency (e.g. "NGN")
+   * @param params.amount - Amount in stroops (7 decimal places)
+   */
+  async convertCurrency(params: {
+    from: string;
+    to: string;
+    amount: bigint | string | number;
+  }): Promise<{
+    from: string;
+    to: string;
+    amount_usdc: string;
+    amount_fiat: string;
+    rate: string;
+    rate_age_secs: number;
+    stale: boolean;
+  }> {
+    const qs = new URLSearchParams({
+      from: params.from,
+      to: params.to,
+      amount: params.amount.toString(),
+    });
+    const res = await fetch(`${this.getIndexerUrl()}/v1/fx/convert?${qs}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`convertCurrency failed (${res.status}): ${body}`);
+    }
+    return res.json();
+  }
+
   /**
    * Issue #680: Fetch a single invoice by id from the FluxaPay backend.
    * @throws {FluxapayError} If the contract operation fails or returns an error.
@@ -2339,6 +2842,7 @@ export class FluxapayClient {
         amount: params.amount,
         currency: params.currency,
         billing_interval: billingIntervalMap[params.billingInterval] ?? 2,
+        trial_days: params.trialDays ?? null,
       }),
     );
     return params.planId;
@@ -2370,6 +2874,7 @@ export class FluxapayClient {
       intervalSecs: p.interval_secs,
       billingInterval: billingIntervalLabels[p.billing_interval] ?? "Monthly",
       active: p.active,
+      trialDays: p.trial_days ?? null,
     };
   }
 
@@ -2735,6 +3240,148 @@ export {
   type AdminAction,
   type FeeSplitConfig,
 } from "./contracts/admin-ops.js";
+export {
+  verifyReceipt,
+  buildPaymentReceipt,
+  buildReceiptMessage,
+  buildReceiptUrl,
+  formatReceiptAmount,
+  signReceiptProof,
+  DEFAULT_RECEIPT_BASE_URL,
+  type PaymentReceipt,
+  type ReceiptSignedFields,
+  type BuildPaymentReceiptParams,
+} from "./receipt.js";
+
+// Issue #765: Export typed event payload interfaces, events namespace, and parseFluxapayEvent helper
+export * as events from "./events.js";
+export {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type BaseFluxapayEvent,
+  type RawEventInput,
+  type PaymentCreatedEvent,
+  type PaymentCreatedPayload,
+  type PaymentConfirmedEvent,
+  type PaymentConfirmedPayload,
+  type PaymentVerifiedEvent,
+  type PaymentVerifiedPayload,
+  type PaymentSettledEvent,
+  type PaymentSettledPayload,
+  type PaymentCancelledEvent,
+  type PaymentCancelledPayload,
+  type PaymentExpiredEvent,
+  type PaymentExpiredPayload,
+  type PaymentPartiallyPaidEvent,
+  type PaymentPartiallyPaidPayload,
+  type PaymentOverpaidEvent,
+  type PaymentOverpaidPayload,
+  type PaymentFailedEvent,
+  type PaymentFailedPayload,
+  type RefundRequestedEvent,
+  type RefundRequestedPayload,
+  type RefundCreatedEvent,
+  type RefundCreatedPayload,
+  type RefundProcessedEvent,
+  type RefundProcessedPayload,
+  type RefundCompletedEvent,
+  type RefundCompletedPayload,
+  type RefundRejectedEvent,
+  type RefundRejectedPayload,
+  type DisputeCreatedEvent,
+  type DisputeCreatedPayload,
+  type DisputeReviewedEvent,
+  type DisputeReviewedPayload,
+  type DisputeResolvedEvent,
+  type DisputeResolvedPayload,
+  type DisputeRejectedEvent,
+  type DisputeRejectedPayload,
+  type DisputeEscalatedEvent,
+  type DisputeEscalatedPayload,
+  type DisputeBondReturnedEvent,
+  type DisputeBondReturnedPayload,
+  type DisputeBondForfeitedEvent,
+  type DisputeBondForfeitedPayload,
+  type MerchantRegisteredEvent,
+  type MerchantRegisteredPayload,
+  type MerchantUpdatedEvent,
+  type MerchantUpdatedPayload,
+  type MerchantVerifiedEvent,
+  type MerchantVerifiedPayload,
+  type MerchantSuspendedEvent,
+  type MerchantSuspendedPayload,
+  type MerchantReinstatedEvent,
+  type MerchantReinstatedPayload,
+  type KycTierUpgradedEvent,
+  type KycTierUpgradedPayload,
+  type LinkCreatedEvent,
+  type LinkCreatedPayload,
+  type LinkUsedEvent,
+  type LinkUsedPayload,
+  type LinkDeactivatedEvent,
+  type LinkDeactivatedPayload,
+  type LinkExpiredEvent,
+  type LinkExpiredPayload,
+  type LinkViewedEvent,
+  type LinkViewedPayload,
+  type SubscriptionCreatedEvent,
+  type SubscriptionCreatedPayload,
+  type SubscriptionChargedEvent,
+  type SubscriptionChargedPayload,
+  type SubscriptionCancelledEvent,
+  type SubscriptionCancelledPayload,
+  type SubscriptionExpiredEvent,
+  type SubscriptionExpiredPayload,
+  type StreamCreatedEvent,
+  type StreamCreatedPayload,
+  type StreamToppedUpEvent,
+  type StreamToppedUpPayload,
+  type StreamWithdrawnEvent,
+  type StreamWithdrawnPayload,
+  type StreamCancelledEvent,
+  type StreamCancelledPayload,
+  type StreamPausedEvent,
+  type StreamPausedPayload,
+  type StreamResumedEvent,
+  type StreamResumedPayload,
+  type StreamRateUpdatedEvent,
+  type StreamRateUpdatedPayload,
+  type StreamRateDecreasedEvent,
+  type StreamRateDecreasedPayload,
+  type StreamMilestoneApprovedEvent,
+  type StreamMilestoneApprovedPayload,
+  type StreamDestinationSetEvent,
+  type StreamDestinationSetPayload,
+  type StreamClosedEvent,
+  type StreamClosedPayload,
+  type RateUpdatedEvent,
+  type RateUpdatedPayload,
+  type RoleGrantedEvent,
+  type RoleGrantedPayload,
+  type RoleRevokedEvent,
+  type RoleRevokedPayload,
+  type AdminTransferProposedEvent,
+  type AdminTransferProposedPayload,
+  type AdminTransferCompletedEvent,
+  type AdminTransferCompletedPayload,
+  type AdminTransferCancelledEvent,
+  type AdminTransferCancelledPayload,
+  type FeeSplitUpdatedEvent,
+  type FeeSplitUpdatedPayload,
+  type TreasuryWithdrawnEvent,
+  type TreasuryWithdrawnPayload,
+  type ContractUpgradedEvent,
+  type ContractUpgradedPayload,
+  type InvoiceCreatedEvent,
+  type InvoiceCreatedPayload,
+  type InvoicePaidEvent,
+  type InvoicePaidPayload,
+  type InvoiceOverdueEvent,
+  type InvoiceOverduePayload,
+  type SwapExecutedEvent,
+  type SwapExecutedPayload,
+  type UnknownFluxapayEvent,
+} from "./events.js";
 
 
 

@@ -77,6 +77,7 @@ fn test_create_payments_batch_all_succeed() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -97,6 +98,7 @@ fn test_create_payments_batch_all_succeed() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -133,6 +135,7 @@ fn test_create_payments_batch_one_invalid_amount_fails_all() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -153,6 +156,7 @@ fn test_create_payments_batch_one_invalid_amount_fails_all() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -192,6 +196,7 @@ fn test_create_payments_batch_duplicate_idempotency_key_within_batch() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -212,6 +217,7 @@ fn test_create_payments_batch_duplicate_idempotency_key_within_batch() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -283,6 +289,7 @@ fn test_create_payments_batch_events_emitted_for_each() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let args2 = crate::CreatePaymentArgs {
@@ -303,6 +310,7 @@ fn test_create_payments_batch_events_emitted_for_each() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let batch = soroban_sdk::vec![&env, args1, args2];
@@ -311,4 +319,136 @@ fn test_create_payments_batch_events_emitted_for_each() {
     assert!(result.is_ok());
     let payment_ids = result.unwrap();
     assert_eq!(payment_ids.len(), 2);
+}
+
+#[test]
+fn test_create_payment_batch_accepts_1_to_10_items() {
+    let env = Env::default();
+    let (_admin, _processor_addr, payment_client, merchant_client) =
+        setup_payment_processor_with_registry(&env);
+    let (_oracle, merchant) =
+        setup_oracle_and_merchant(&env, &_admin, &payment_client, &merchant_client);
+
+    let mut payments = soroban_sdk::vec![&env];
+    for i in 0..5 {
+        let req = crate::PaymentRequest {
+            payment_id: String::from_str(&env, &format!("pay_req_{}", i)),
+            amount: 100_000_000i128 * (i as i128 + 1),
+            currency: Symbol::new(&env, "USDC"),
+            deposit_address: Address::generate(&env),
+            expires_at: Some(env.ledger().timestamp() + 3600),
+            duration_secs: None,
+            memo: None,
+            memo_type: None,
+            token_address: None,
+            client_token: Some(String::from_str(&env, &format!("token_batch_{}", i))),
+            metadata_hash: None,
+            metadata: None,
+            fee_waiver_code: None,
+            payer: None,
+            payer_muxed_id: None,
+        };
+        payments.push_back(req);
+    }
+
+    let result = payment_client.try_create_payment_batch(&merchant, &payments);
+    assert!(result.is_ok());
+    let ids = result.unwrap();
+    assert_eq!(ids.len(), 5);
+
+    // Verify all 5 payments are stored
+    for i in 0..5 {
+        let payment_id = String::from_str(&env, &format!("pay_req_{}", i));
+        let payment = payment_client.get_payment(&payment_id);
+        assert_eq!(payment.merchant_id, merchant);
+        assert_eq!(payment.amount, 100_000_000i128 * (i as i128 + 1));
+    }
+}
+
+#[test]
+fn test_create_payment_batch_returns_batch_too_large_for_over_10_items() {
+    let env = Env::default();
+    let (_admin, _processor_addr, payment_client, merchant_client) =
+        setup_payment_processor_with_registry(&env);
+    let (_oracle, merchant) =
+        setup_oracle_and_merchant(&env, &_admin, &payment_client, &merchant_client);
+
+    let mut payments = soroban_sdk::vec![&env];
+    for i in 0..11 {
+        let req = crate::PaymentRequest {
+            payment_id: String::from_str(&env, &format!("pay_req_large_{}", i)),
+            amount: 100_000_000i128,
+            currency: Symbol::new(&env, "USDC"),
+            deposit_address: Address::generate(&env),
+            expires_at: Some(env.ledger().timestamp() + 3600),
+            duration_secs: None,
+            memo: None,
+            memo_type: None,
+            token_address: None,
+            client_token: None,
+            metadata_hash: None,
+            metadata: None,
+            fee_waiver_code: None,
+            payer: None,
+            payer_muxed_id: None,
+        };
+        payments.push_back(req);
+    }
+
+    let result = payment_client.try_create_payment_batch(&merchant, &payments);
+    assert_eq!(result, Err(Ok(crate::Error::BatchTooLarge)));
+}
+
+#[test]
+fn test_create_payment_batch_atomic_rollback_on_failure() {
+    let env = Env::default();
+    let (_admin, _processor_addr, payment_client, merchant_client) =
+        setup_payment_processor_with_registry(&env);
+    let (_oracle, merchant) =
+        setup_oracle_and_merchant(&env, &_admin, &payment_client, &merchant_client);
+
+    let req1 = crate::PaymentRequest {
+        payment_id: String::from_str(&env, "atomic_pay_1"),
+        amount: 100_000_000i128,
+        currency: Symbol::new(&env, "USDC"),
+        deposit_address: Address::generate(&env),
+        expires_at: Some(env.ledger().timestamp() + 3600),
+        duration_secs: None,
+        memo: None,
+        memo_type: None,
+        token_address: None,
+        client_token: None,
+        metadata_hash: None,
+        metadata: None,
+        fee_waiver_code: None,
+        payer: None,
+        payer_muxed_id: None,
+    };
+
+    // Invalid amount: negative
+    let req2 = crate::PaymentRequest {
+        payment_id: String::from_str(&env, "atomic_pay_2"),
+        amount: -50i128,
+        currency: Symbol::new(&env, "USDC"),
+        deposit_address: Address::generate(&env),
+        expires_at: Some(env.ledger().timestamp() + 3600),
+        duration_secs: None,
+        memo: None,
+        memo_type: None,
+        token_address: None,
+        client_token: None,
+        metadata_hash: None,
+        metadata: None,
+        fee_waiver_code: None,
+        payer: None,
+        payer_muxed_id: None,
+    };
+
+    let payments = soroban_sdk::vec![&env, req1, req2];
+    let result = payment_client.try_create_payment_batch(&merchant, &payments);
+    assert!(result.is_err());
+
+    // Verify req1 was NOT stored
+    let check1 = payment_client.try_get_payment(&String::from_str(&env, "atomic_pay_1"));
+    assert!(check1.is_err());
 }

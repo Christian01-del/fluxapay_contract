@@ -155,6 +155,62 @@ stellar contract invoke \
   --memo_type "Text"
 ```
 
+#### Muxed account (M-address) payment routing (Issue #841)
+
+Stellar muxed accounts embed a 64-bit sub-account ID in an M-address so merchants
+can route many customers through one G-address without extra keypairs.
+
+On-chain type:
+
+```rust
+pub struct MuxedAccount {
+    pub account: Address, // underlying G-address
+    pub id: u64,          // sub-account / memo ID
+}
+```
+
+Create a payment that only confirms when the payer's muxed ID matches:
+
+```bash
+# Expected muxed sub-account ID for this customer
+MUXED_ID=42000
+
+stellar contract invoke \
+  --id $PAYMENT_PROCESSOR_ID \
+  --network testnet \
+  --source $TEST_MERCHANT_ADDRESS \
+  -- create_payment \
+  --payment_id "inv_muxed_001" \
+  --merchant_id $TEST_MERCHANT_ADDRESS \
+  --amount 1000000000 \
+  --currency USDC \
+  --deposit_address $ADMIN_ADDRESS \
+  --expires_at $EXPIRES_AT \
+  --payer_muxed_id $MUXED_ID
+```
+
+When the oracle later calls `verify_payment`, it must pass the same
+`--payer_muxed_id`. A mismatch returns `MuxedAccountMismatch` (#70).
+If `payer_muxed_id` is omitted at create time, any payer (G- or M-address) is accepted.
+
+SDK equivalent:
+
+```ts
+import { FluxapayClient, encodeMuxedAddress, decodeMuxedAddress } from "@fluxapay/sdk";
+
+const mAddress = encodeMuxedAddress(customerGAddress, 42000n);
+const { gAddress, id } = decodeMuxedAddress(mAddress);
+
+await client.createPayment({
+  paymentId: "inv_muxed_001",
+  merchantId: MERCHANT,
+  amount: 1_000_000_000n,
+  currency: "USDC",
+  depositAddress: DEPOSIT,
+  muxedPayer: mAddress, // M-address string
+});
+```
+
 #### Expected Output
 
 Success returns a `PaymentCharge` object:

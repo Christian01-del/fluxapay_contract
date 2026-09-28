@@ -716,6 +716,8 @@ impl PaymentLinkManager {
             payer_muxed_id: None,
             // Issue #668: trace this payment back to the link that created it.
             payment_link_id: Some(link_id.clone()),
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         // Store the payment charge

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracterror, contracttype, Address, BytesN, Env, Symbol};
 
 /// Errors returned by the dispute contract.
 #[contracterror]
@@ -40,6 +40,7 @@ pub struct Dispute {
     pub disputed_amount: i128,
     pub bond_amount: i128,
     pub resolved: bool,
+    pub evidence_hash: BytesN<32>,
 }
 
 /// Read the configured absolute minimum bond, falling back to the default.
@@ -90,13 +91,14 @@ pub fn set_dispute_bond_params(
     Ok(())
 }
 
-/// Open a dispute against a payment, enforcing a proportional minimum bond.
+/// Open a dispute against a payment, enforcing a proportional minimum bond and storing SHA-256 evidence hash.
 pub fn open_dispute(
     env: &Env,
     opener: Address,
     payment_id: u64,
     disputed_amount: i128,
     bond_amount: i128,
+    evidence_hash: BytesN<32>,
 ) -> Result<u64, DisputeError> {
     opener.require_auth();
 
@@ -118,14 +120,31 @@ pub fn open_dispute(
     let dispute = Dispute {
         id,
         payment_id,
-        opener,
+        opener: opener.clone(),
         disputed_amount,
         bond_amount,
         resolved: false,
+        evidence_hash: evidence_hash.clone(),
     };
     env.storage()
         .persistent()
         .set(&(Symbol::new(env, "dispute"), id), &dispute);
 
+    // DISPUTE/OPENED event payload includes the hash (Issue #773).
+    env.events().publish(
+        (Symbol::new(env, "DISPUTE"), Symbol::new(env, "OPENED")),
+        (id, payment_id, opener, evidence_hash),
+    );
+
     Ok(id)
+}
+
+/// Read-only entry point returning the stored evidence hash for a given dispute ID (Issue #773).
+pub fn verify_evidence(env: &Env, dispute_id: u64) -> Result<BytesN<32>, DisputeError> {
+    let dispute: Dispute = env
+        .storage()
+        .persistent()
+        .get(&(Symbol::new(env, "dispute"), dispute_id))
+        .ok_or(DisputeError::DisputeNotFound)?;
+    Ok(dispute.evidence_hash)
 }

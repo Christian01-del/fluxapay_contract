@@ -54,6 +54,7 @@ fn create_and_verify(
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 

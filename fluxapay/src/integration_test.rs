@@ -62,6 +62,7 @@ fn integration_payment_args(
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     }
 }
 
@@ -237,6 +238,7 @@ fn test_happy_path_flow() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -317,6 +319,7 @@ fn test_settlement_path() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -373,6 +376,7 @@ fn test_failure_and_expiration_path() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -500,6 +504,7 @@ fn test_upgrade_contract_storage_compatibility() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -548,6 +553,7 @@ fn test_prune_expired_payments_expired_pending() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -595,6 +601,7 @@ fn test_prune_expired_payments_non_expired_skipped() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -641,6 +648,7 @@ fn test_prune_expired_payments_non_pending_skipped() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -744,6 +752,7 @@ fn test_settle_payment_with_zero_merchant_fee() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -818,6 +827,7 @@ fn test_settle_payment_with_bps_only_fee() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -892,6 +902,7 @@ fn test_settle_payment_with_fixed_fee() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -966,6 +977,7 @@ fn test_settle_payment_with_combined_fee() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -1026,6 +1038,7 @@ fn test_settle_payment_no_registry_configured() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -1107,6 +1120,7 @@ fn test_cross_contract_happy_path() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
@@ -1185,6 +1199,7 @@ fn test_cross_contract_unverified_merchant_rejection() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     // Creating payment with unverified merchant should fail
@@ -1242,6 +1257,7 @@ fn test_cross_contract_suspended_merchant_rejection() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     // Creating payment with suspended merchant should fail
@@ -1291,6 +1307,7 @@ fn test_cross_contract_registry_not_set_regression() {
         client_token: None,
         metadata_hash: None,
         metadata: None,
+            tip_enabled: false,
     };
 
     // Should succeed because merchant has MERCHANT role (registry check skipped)
@@ -1377,6 +1394,7 @@ fn setup_dispute(
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
     payment_client.create_payment(&args);
 
