@@ -31,16 +31,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
         with:
           toolchain: 1.85.0
           components: rustfmt
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
@@ -57,17 +57,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
         with:
           toolchain: 1.85.0
           components: clippy
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             ~/.cargo/registry
@@ -82,24 +82,50 @@ jobs:
 
       - name: Check Documentation
         run: cargo doc --no-deps
+
+  # Job 2b: Supply Chain & Security (cargo-deny & cargo-audit)
+  cargo-deny:
+    name: Cargo Deny Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses advisories
+
+  cargo-audit:
+    name: Cargo Audit Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Security audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   # Job 3: Build the contract
   build:
     name: Build Contract
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [format, lint]
+    needs: [format, lint, cargo-deny, cargo-audit]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
         with:
           toolchain: 1.85.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Stellar CLI
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         id: cache-stellar-cli
         with:
           path: ~/.cargo/bin/stellar
@@ -117,7 +143,7 @@ jobs:
         run: stellar --version
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             ~/.cargo/registry
@@ -144,7 +170,7 @@ jobs:
         run: ls -lh target/wasm32-unknown-unknown/release/*.wasm
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: fluxapay-contract-${{ github.sha }}
           path: target/wasm32-unknown-unknown/release/*.wasm
@@ -192,16 +218,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6d9817901c499d6b02debbb57edb730263a0f910  # stable
         with:
           toolchain: 1.85.0
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             ~/.cargo/registry
@@ -250,115 +276,4 @@ jobs:
           fi
 
   # Job 5: Run tests
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [build]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.85.0
-          targets: wasm32-unknown-unknown
-
-      - name: Cache Stellar CLI
-        uses: actions/cache@v4
-        id: cache-stellar-cli
-        with:
-          path: ~/.cargo/bin/stellar
-          key: ${{ runner.os }}-stellar-cli-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
-
-      - name: Install Stellar CLI
-        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
-        run: cargo install --locked stellar-cli
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
-
-      - name: Run tests
-        run: cargo test --verbose --all-features
-
-  # Job 5b: Bounded property tests (separate job for independent failure reporting)
-  proptest:
-    name: Property Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [build]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.85.0
-          targets: wasm32-unknown-unknown
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-proptest-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-proptest-
-
-      - name: Cache proptest regressions
-        uses: actions/cache@v4
-        with:
-          path: fluxapay/proptest-regressions
-          key: ${{ runner.os }}-proptest-regressions-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-proptest-regressions-
-
-      - name: Run bounded property tests
-        run: "PROPTEST_CASES=256 cargo test -p fluxapay proptests:: --all-features -- --test-threads=1"
-
-      - name: Upload proptest regression cases
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: proptest-regressions-${{ github.sha }}
-          path: fluxapay/proptest-regressions
-          retention-days: 30
-
-  # Final job: Report overall status
-  ci-success:
-    name: CI Success
-    if: ${{ always() }}
-    needs: [format, lint, build, wasm-size-check, test, proptest]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check all jobs
-        run: |
-          if [[ "${{ needs.format.result }}" == "success" ]] && \
-             [[ "${{ needs.lint.result }}" == "success" ]] && \
-             [[ "${{ needs.build.result }}" == "success" ]] && \
-             [[ "${{ needs.wasm-size-check.result }}" == "success" ]] && \
-             [[ "${{ needs.test.result }}" == "success" ]] && \
-             [[ "${{ needs.proptest.result }}" == "success" ]]; then
-            echo "✅ All CI checks passed!"
-            exit 0
-          else
-            echo "❌ Some CI checks failed"
-            exit 1
-          fi
+  te

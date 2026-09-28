@@ -8,6 +8,7 @@ pub enum AccountAbstractionError {
     SessionNotFound = 2,
     SessionExpired = 3,
     InvalidPayload = 4,
+    SignerRevoked = 5,
 }
 
 /// Session key metadata stored in persistent storage
@@ -33,6 +34,8 @@ pub struct SessionExecutedEvent {
 pub enum AccountAbstractionDataKey {
     /// Maps (account, session_key) -> SessionKeyMetadata
     SessionKey(Address, Address),
+    /// Maps (account, signer) -> bool; set when a delegated signer is revoked
+    SignerRevoked(Address, Address),
 }
 
 /// Register a new session key with an expiration timestamp for an account.
@@ -56,6 +59,15 @@ pub fn register_session_key(
         &AccountAbstractionDataKey::SessionKey(account.clone(), session_key.clone()),
         &meta,
     );
+
+    // Re-registering a session key clears any prior revocation flag so the
+    // signer is active again.
+    env.storage()
+        .persistent()
+        .remove(&AccountAbstractionDataKey::SignerRevoked(
+            account.clone(),
+            session_key.clone(),
+        ));
 
     env.events().publish(
         (
@@ -86,6 +98,13 @@ pub fn revoke_session_key(
 
     env.storage().persistent().remove(&key);
 
+    // Mark the signer as revoked so any in-flight, pre-signed payloads are
+    // rejected at execution time even after the session metadata is removed.
+    env.storage().persistent().set(
+        &AccountAbstractionDataKey::SignerRevoked(account.clone(), session_key.clone()),
+        &true,
+    );
+
     env.events().publish(
         (
             Symbol::new(&env, "SESSION"),
@@ -107,6 +126,15 @@ pub fn execute_with_session(
     payload: Bytes,
 ) -> Result<Bytes, AccountAbstractionError> {
     session_key.require_auth();
+
+    // Atomically check revocation and permissions: the revocation flag is read
+    // in the same critical section as the session metadata lookup so a revoked
+    // signer cannot slip a pre-signed payload through between the two reads.
+    let revoked_key =
+        AccountAbstractionDataKey::SignerRevoked(account.clone(), session_key.clone());
+    if env.storage().persistent().has(&revoked_key) {
+        return Err(AccountAbstractionError::SignerRevoked);
+    }
 
     let key = AccountAbstractionDataKey::SessionKey(account.clone(), session_key.clone());
     let session_meta: SessionKeyMetadata = env
@@ -160,6 +188,31 @@ mod tests {
         let payload = Bytes::from_slice(&env, b"test_payload");
         let res = execute_with_session(env.clone(), account.clone(), session_key.clone(), payload);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_register_session_key_expired_ledger_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let account = Address::generate(&env);
+        let session_key = Address::generate(&env);
+        // expires_at in the past — registration succeeds (storage is permissive)
+        // but execution immediately fails with SessionExpired.
+        let expires_at = env.ledger().timestamp().saturating_sub(1);
+
+        let res = register_session_key(
+            env.clone(),
+            account.clone(),
+            session_key.clone(),
+            expires_at,
+        );
+        assert!(res.is_ok(), "registration itself should succeed");
+
+        // Execute should immediately reject because the session is expired.
+        let payload = Bytes::from_slice(&env, b"test_payload");
+        let res = execute_with_session(env, account, session_key, payload);
+        assert_eq!(res, Err(AccountAbstractionError::SessionExpired));
     }
 
     #[test]
@@ -220,6 +273,64 @@ mod tests {
 
         let payload = Bytes::from_slice(&env, b"test_payload");
         let res = execute_with_session(env, account, session_key, payload);
-        assert_eq!(res, Err(AccountAbstractionError::SessionNotFound));
+        assert_eq!(res, Err(AccountAbstractionError::SignerRevoked));
+    }
+
+    #[test]
+    fn test_execute_with_session_revoked_key_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let account = Address::generate(&env);
+        let session_key = Address::generate(&env);
+        let expires_at = env.ledger().timestamp() + 3600;
+
+        let _ = register_session_key(
+            env.clone(),
+            account.clone(),
+            session_key.clone(),
+            expires_at,
+        );
+
+        // Pre-sign a payload while the signer is still active.
+        let payload = Bytes::from_slice(&env, b"pre_signed_payload");
+
+        // Merchant revokes the delegated signer before the payload is submitted.
+        assert!(revoke_session_key(env.clone(), account.clone(), session_key.clone()).is_ok());
+
+        // The in-flight, pre-signed payload must now be rejected.
+        let res = execute_with_session(env, account, session_key, payload);
+        assert_eq!(res, Err(AccountAbstractionError::SignerRevoked));
+    }
+
+    #[test]
+    fn test_reregister_clears_revocation() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let account = Address::generate(&env);
+        let session_key = Address::generate(&env);
+        let expires_at = env.ledger().timestamp() + 3600;
+
+        let _ = register_session_key(
+            env.clone(),
+            account.clone(),
+            session_key.clone(),
+            expires_at,
+        );
+        assert!(revoke_session_key(env.clone(), account.clone(), session_key.clone()).is_ok());
+
+        // Re-registering the signer clears the revocation flag.
+        assert!(register_session_key(
+            env.clone(),
+            account.clone(),
+            session_key.clone(),
+            expires_at
+        )
+        .is_ok());
+
+        let payload = Bytes::from_slice(&env, b"test_payload");
+        let res = execute_with_session(env, account, session_key, payload);
+        assert!(res.is_ok());
     }
 }

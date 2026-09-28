@@ -16,6 +16,10 @@ Upgrading between major versions? See the
 [SDK Migration Guide](../docs/sdk-migration-guide.md) for breaking changes
 and before/after code snippets.
 
+Running testnet integration tests? See the
+[Integration Test Guide](../docs/integration-test-guide.md) for setup
+and prerequisites.
+
 ## Quick Start
 
 ```typescript
@@ -52,6 +56,107 @@ async function main() {
   console.log("Payment status:", status);
 }
 ```
+
+## On-Chain Event Types & Parsing (Issue #765)
+
+The SDK exports typed interfaces for all on-chain events emitted across FluxaPay contracts, plus a `parseFluxapayEvent` helper that discriminates raw Soroban RPC or Horizon event streams into strongly typed events.
+
+```typescript
+import {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type PaymentCreatedEvent,
+  type RefundCompletedEvent,
+  type StreamWithdrawnEvent,
+} from "@fluxapay/sdk";
+
+// Listen to Horizon or Soroban RPC events
+for (const rawEvent of eventsFromRpc) {
+  const event: FluxapayEvent = parseFluxapayEvent(rawEvent);
+
+  switch (event.type) {
+    case "PAYMENT/CREATED":
+      // TypeScript automatically narrows payload to PaymentCreatedPayload
+      console.log(`Payment created: ${event.payload.payment_id} for ${event.payload.amount} stroops`);
+      break;
+
+    case "REFUND/COMPLETED":
+      console.log(`Refund ${event.payload.refund_id} completed: ${event.payload.refund_amount} stroops`);
+      break;
+
+    case "STREAM/WITHDRAWN":
+      console.log(`Stream ${event.payload.stream_id} withdrawn: ${event.payload.amount} (memo: ${event.payload.memo})`);
+      break;
+
+    case "ACCESS_CONTROL/ADMIN_TRANSFER_PROPOSED":
+      console.log(`Admin transfer proposed for ${event.payload.new_admin} at ledger ${event.payload.earliest_acceptance_ledger}`);
+      break;
+
+    default:
+      console.log(`Event: ${event.type}`, event.payload);
+  }
+}
+```
+
+You can also import from the dedicated `events` namespace:
+
+```typescript
+import { events } from "@fluxapay/sdk";
+
+const parsed = events.parseFluxapayEvent(rawEvent);
+```
+
+## Bulk payment status
+
+Reconciling a batch of orders with `getPayment` in a loop costs N sequential RPC
+round trips — latency grows with the order book. `getPaymentStatuses` fans the
+reads out concurrently instead:
+
+```typescript
+const statuses = await client.getPaymentStatuses([
+  "pay_001",
+  "pay_002",
+  "pay_003",
+]);
+
+// Map<string, PaymentStatusValue | null>
+for (const [id, status] of statuses) {
+  if (status === null) {
+    console.warn(`${id}: no such payment`);
+  } else {
+    console.log(`${id}: ${JSON.stringify(status)}`);
+  }
+}
+```
+
+**A missing payment is `null`, not an error.** A merchant checking 50 orders
+should not lose the other 49 because one ID was mistyped. Anything *other* than
+not-found — an RPC outage, an auth failure — is rethrown, because silently
+reporting "these 50 orders do not exist" would be far worse than an error.
+
+**Capped at 50 IDs**, enforced client-side before any request:
+
+```typescript
+import { BatchTooLargeError, MAX_BATCH_STATUS_IDS } from "@fluxapay/sdk";
+
+try {
+  await client.getPaymentStatuses(tooMany);
+} catch (err) {
+  if (err instanceof BatchTooLargeError) {
+    console.error(`Split into chunks of ${MAX_BATCH_STATUS_IDS}`);
+  }
+}
+```
+
+Duplicate IDs are collapsed into a single read; the returned Map is keyed by ID
+either way.
+
+> The reads are issued concurrently against the same RPC rather than as one
+> contract invocation. A true single-call batch needs an on-chain view taking a
+> vector of IDs, and `get_payment` takes one — so batching on-chain would mean a
+> contract change and a redeploy. This gets the latency win without that. If
+> such a view lands later, the method signature does not change; only its body
+> does.
 
 ## Contract IDs
 
@@ -349,6 +454,38 @@ const settlement = await client.getCollaborativeSettlement("dispute_001");
 
 An invalid or mismatched signature surfaces as a mapped `InvalidSettlementSignature`
 `FluxapayError` (see `docs/error-codes.md`).
+
+## Subscription Management
+
+Create a merchant plan, subscribe a payer, and let an authorized billing
+operator process charges when they become due:
+
+```typescript
+const planId = await client.createSubscriptionPlan({
+  merchant: "GMERCHANT...",
+  planId: "pro_monthly",
+  name: "Pro",
+  description: "Monthly Pro subscription",
+  amount: 2_000_000n,
+  currency: "USDC",
+  billingInterval: "Monthly",
+});
+
+const subscriptionId = await client.subscribe({
+  payer: "GPAYER...",
+  planId,
+  maxPayments: 12,
+});
+
+await client.chargeSubscription("GBILLING_OPERATOR...", subscriptionId);
+const subscription = await client.getSubscription(subscriptionId);
+// Pause, resume, or cancel from the payer (or merchant for cancellation).
+await client.pauseSubscription("GPAYER...", subscriptionId);
+```
+
+`getPayerSubscriptions(payer)` returns all subscriptions associated with a
+payer. Subscription charge failures surface the mapped
+`SubscriptionInGracePeriod` and `SubscriptionRetryExhausted` errors.
 
 ## Usage-Based Billing (Metered Subscriptions) (issue #664)
 
@@ -729,7 +866,34 @@ const restored = signer.restore(tickPayload);
 
 You can also use the standalone builder functions directly: `buildSubscriptionTickPayload`, `buildPullAuthorizationPayload`, `buildCreatePaymentPayload`, `buildVerifyPaymentPayload`, `buildCreateRefundPayload`.
 
+## Scoped API Keys
+
+Issue scoped API keys to restrict integrations or services to specific capabilities:
+
+```typescript
+// Create a scoped API key
+const keyRecord = await client.createApiKey({
+  merchant: "G_MERCHANT...",
+  keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  scopes: ["read:payments", "write:payments"],
+});
+
+// Retrieve an API key
+const record = await client.getApiKey(keyHash);
+
+// Revoke an API key
+await client.revokeApiKey("G_MERCHANT...", keyHash);
+```
+
+Available scopes:
+- `read:payments`: Query payments, refunds, and disputes.
+- `write:payments`: Create payments and charge authorizations.
+- `read:analytics`: Query payment metrics and events.
+- `manage:webhooks`: Manage webhook registrations.
+- `admin`: Full unrestricted access.
+
 ## License
+
 
 MIT
 

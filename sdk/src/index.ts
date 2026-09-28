@@ -1,21 +1,21 @@
 import {
   Client as ContractClient,
-  Merchant,
-  PaymentCharge,
-  Refund,
-  Dispute,
-  PaymentStatus,
-  RefundStatus,
-  DisputeStatus,
-  FeeConfig,
-  MaybeFeeConfig,
-  CreatePaymentArgs,
+  type Merchant,
+  type PaymentCharge,
+  type Refund,
+  type Dispute,
+  type PaymentStatus,
+  type RefundStatus,
+  type DisputeStatus,
+  type FeeConfig,
+  type MaybeFeeConfig,
+  type CreatePaymentArgs,
 } from "./contracts/fluxapay/src/index.js";
 import { Networks } from "@stellar/stellar-sdk";
 import {
   FluxapayOfflineSigner,
-  OfflineTransactionPayload,
-  SubscriptionBillingClient,
+  type OfflineTransactionPayload,
+  type SubscriptionBillingClient,
   buildOfflinePayload,
   buildCreatePaymentPayload,
   buildVerifyPaymentPayload,
@@ -27,15 +27,20 @@ import {
 } from "./offline-signer.js";
 import {
   NetworkProfileSwitcher,
-  NetworkEnvironment,
+  type NetworkEnvironment,
   NetworkProfiles,
-  NetworkProfile,
+  type NetworkProfile,
   FLUXAPAY_CONTRACT_IDS,
   UNSET_CONTRACT_ID,
 } from "./network-profiles.js";
 
 export { FLUXAPAY_CONTRACT_IDS, UNSET_CONTRACT_ID } from "./network-profiles.js";
 export type { FluxapayContractIds } from "./network-profiles.js";
+export {
+  verifyWebhookSignature,
+  parseWebhookSignatureHeader,
+  type ParsedWebhookSignature,
+} from "./webhooks.js";
 import { FxOracleClient } from "./contracts/fx-oracle.js";
 import {
   MerchantRegistryClient,
@@ -43,7 +48,9 @@ import {
   type AddCurrencyPayoutParams,
   type CurrencyPayout,
   type BankAccount,
+  type MerchantPage,
 } from "./contracts/merchant-registry.js";
+export type { MerchantPage };
 import {
   PaymentLinkManagerClient,
   type PaymentLinkManagerConfig,
@@ -53,13 +60,37 @@ import {
   type CreatePaymentLinkResult,
   type BatchLinkItem,
 } from "./contracts/payment-link-manager.js";
+import {
+  DexRouterClient,
+  type DexRouterConfig,
+  type ExecuteSwapParams,
+  DexRouterError,
+  DEX_ROUTER_ERROR_MAP,
+} from "./contracts/dex-router.js";
 import { SEP10Authenticator, type SEP10ChallengeResponse, type SEP10AuthenticatedResponse } from "./sep10.js";
+import {
+  getLocalizedErrorMessage,
+  MESSAGES,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+} from "./locales/index.js";
+
+export {
+  DexRouterClient,
+  type DexRouterConfig,
+  type ExecuteSwapParams,
+  DexRouterError,
+  DEX_ROUTER_ERROR_MAP,
+};
 
 
+export { getLocalizedErrorMessage, MESSAGES, SUPPORTED_LOCALES, type SupportedLocale };
 
 export interface FluxapayConfig {
   network: NetworkEnvironment;
   rpcUrl?: string;
+  /** Locale for error messages (e.g. 'en', 'fr', 'pt', 'es'). Defaults to 'en'. */
+  locale?: string;
   /**
    * PaymentProcessor contract ID. Optional — falls back to
    * `FLUXAPAY_CONTRACT_IDS[network].paymentProcessor` when omitted.
@@ -151,6 +182,34 @@ export interface CreatePaymentParams {
   feeWaiverCode?: string;
 }
 
+/**
+ * Issue #771: A single payment request item within a batch creation transaction.
+ */
+export interface PaymentRequest {
+  paymentId: string;
+  amount: bigint;
+  currency: string;
+  depositAddress: string;
+  expiresAt?: bigint;
+  durationSecs?: bigint;
+  memo?: string;
+  memoType?: string;
+  tokenAddress?: string;
+  clientToken?: string;
+  metadata?: Record<string, string>;
+  feeWaiverCode?: string;
+  payer?: string;
+  payerMuxedId?: bigint;
+}
+
+/**
+ * Issue #771: Parameters for creating a batch of up to 10 payments.
+ */
+export interface CreatePaymentBatchParams {
+  merchantId: string;
+  payments: PaymentRequest[];
+}
+
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
 export type StreamStatus = "Active" | "Cancelled" | "Exhausted" | "Paused";
 
@@ -201,6 +260,88 @@ export interface SubscriptionPlan {
   intervalSecs: bigint;
   billingInterval: "Daily" | "Weekly" | "Monthly" | "Annually";
   active: boolean;
+}
+
+/** Mirrors the on-chain `Subscription` struct in `fluxapay/src/types.rs`. */
+export interface Subscription {
+  subscriptionId: string;
+  merchantId: string;
+  payerAddress: string;
+  planId: string;
+  amount: bigint;
+  currency: string;
+  intervalSecs: bigint;
+  nextPaymentAt: bigint;
+  status: "Active" | "Paused" | "Cancelled" | "Expired";
+  createdAt: bigint;
+  lastPaymentAt: bigint | null;
+  totalPayments: number;
+  maxPayments: number | null;
+  retryCount: number;
+  nextRetryAt: bigint | null;
+  resumeAt: bigint | null;
+  affiliate: string | null;
+  affiliateFeeBps: number | null;
+}
+
+export interface CreatePlanParams {
+  merchant: string;
+  planId: string;
+  name: string;
+  description: string;
+  amount: bigint;
+  currency: string;
+  billingInterval: SubscriptionPlan["billingInterval"];
+}
+
+export interface SubscribeParams {
+  payer: string;
+  planId: string;
+  maxPayments?: number;
+  affiliate?: string;
+  affiliateFeeBps?: number;
+}
+
+function fromContractSubscription(raw: {
+  subscription_id: string;
+  merchant_id: string;
+  payer_address: string;
+  plan_id: string;
+  amount: bigint;
+  currency: string;
+  interval_secs: bigint;
+  next_payment_at: bigint;
+  status: Subscription["status"];
+  created_at: bigint;
+  last_payment_at?: bigint | null;
+  total_payments: number;
+  max_payments?: number | null;
+  retry_count: number;
+  next_retry_at?: bigint | null;
+  resume_at?: bigint | null;
+  affiliate?: string | null;
+  affiliate_fee_bps?: number | null;
+}): Subscription {
+  return {
+    subscriptionId: raw.subscription_id,
+    merchantId: raw.merchant_id,
+    payerAddress: raw.payer_address,
+    planId: raw.plan_id,
+    amount: raw.amount,
+    currency: raw.currency,
+    intervalSecs: raw.interval_secs,
+    nextPaymentAt: raw.next_payment_at,
+    status: raw.status,
+    createdAt: raw.created_at,
+    lastPaymentAt: raw.last_payment_at ?? null,
+    totalPayments: raw.total_payments,
+    maxPayments: raw.max_payments ?? null,
+    retryCount: raw.retry_count,
+    nextRetryAt: raw.next_retry_at ?? null,
+    resumeAt: raw.resume_at ?? null,
+    affiliate: raw.affiliate ?? null,
+    affiliateFeeBps: raw.affiliate_fee_bps ?? null,
+  };
 }
 
 export interface CreateStreamParams {
@@ -278,7 +419,27 @@ export const MerchantAuthError = {
   4: { message: "InvalidAmount" },
   5: { message: "Unauthorized" },
   6: { message: "AuthorizationAlreadyExists" },
+  7: { message: "ApiKeyNotFound" },
+  8: { message: "ApiKeyRevoked" },
 } as const;
+
+/**
+ * Issue #854: Scoped API key record for a merchant.
+ */
+export interface ApiKeyRecord {
+  key_hash: string;
+  merchant: string;
+  scopes: string[];
+  created_at: bigint;
+  revoked: boolean;
+}
+
+export interface CreateApiKeyParams {
+  merchant: string;
+  keyHash: string;
+  scopes: string[];
+}
+
 
 /**
  * Issue #185 / #665: Record of a dispute settled off-chain by mutual
@@ -428,10 +589,15 @@ export const FLUXAPAY_CONTRACT_ERROR_MAP: Record<number, string> = {
   59: "LinkMaxUsesReached",
   60: "DirectTransferNotDisputable",
   61: "MaxRetriesExceeded",
+  347: "RetryChainTooDeep",
   62: "InvalidStatusTransition",
   63: "RefundNotApproved",
   64: "RouterNotAllowed",
   65: "RouteOutputInsufficient",
+  66: "BatchContainsDuplicates",
+  67: "InputTooLong",
+  68: "TimelockNotExpired",
+  69: "InvalidEvidenceCid",
   404: "PaymentNotFound",
   405: "RefundNotFound",
   406: "InvalidAmount",
@@ -441,15 +607,47 @@ export class FluxapayError extends Error {
   readonly code: number;
   readonly contractErrorName: string;
   readonly cause?: unknown;
+  readonly locale: string;
 
-  constructor(code: number, contractErrorName: string, message?: string, cause?: unknown) {
+  constructor(
+    code: number,
+    contractErrorName: string,
+    message?: string,
+    cause?: unknown,
+    locale = "en",
+  ) {
     super(message ?? contractErrorName);
     this.name = `${contractErrorName}Error`;
     this.code = code;
     this.contractErrorName = contractErrorName;
     this.cause = cause;
+    this.locale = locale;
+  }
+
+  get localizedMessage(): string {
+    return getLocalizedErrorMessage(this.code, this.locale, this.message);
   }
 }
+
+/**
+ * Issue #814: raised client-side when a batch exceeds `MAX_BATCH_STATUS_IDS`.
+ *
+ * Thrown before any network call rather than letting the RPC reject it, so the
+ * caller gets an actionable message instead of a simulation failure — and so
+ * the cap is enforced even against an RPC that would have accepted more.
+ */
+export class BatchTooLargeError extends Error {
+  constructor(
+    readonly requested: number,
+    readonly limit: number,
+  ) {
+    super(`Batch of ${requested} exceeds the maximum of ${limit} payment IDs`);
+    this.name = "BatchTooLargeError";
+  }
+}
+
+/** Issue #814: maximum payment IDs accepted by `getPaymentStatuses`. */
+export const MAX_BATCH_STATUS_IDS = 50;
 
 const HOST_ERROR_CODE_REGEX = /Error\(Contract,\s*#(\d+)\)/;
 
@@ -482,7 +680,7 @@ function parseContractErrorCode(error: unknown): number | null {
   return null;
 }
 
-function toFluxapayError(error: unknown): FluxapayError {
+export function toFluxapayError(error: unknown, locale = "en"): FluxapayError {
   const code = parseContractErrorCode(error);
   if (code === null) {
     if (error instanceof Error) {
@@ -497,14 +695,62 @@ function toFluxapayError(error: unknown): FluxapayError {
     contractErrorName,
     `${contractErrorName} (contract error #${code})`,
     error,
+    locale,
   );
 }
 
-async function withMappedContractError<T>(operation: () => Promise<T>): Promise<T> {
+/**
+ * Issue #814: a payment's status as the contract reports it.
+ *
+ * Deliberately loose. The contract's status enum is generated per-binding and
+ * the shape differs between a `Result`-wrapped simulation and a direct read, so
+ * pinning it here would break on the next binding regeneration.
+ */
+export type PaymentStatusValue = string | { tag: string; values?: unknown };
+
+/** Pulls the status field out of whatever shape `get_payment` returned. */
+function extractPaymentStatus(payment: unknown): PaymentStatusValue | null {
+  if (payment === null || payment === undefined) return null;
+
+  // Simulation results arrive wrapped; unwrap one level if present.
+  const unwrapped =
+    typeof payment === "object" && payment !== null && "result" in payment
+      ? (payment as { result: unknown }).result
+      : payment;
+
+  if (typeof unwrapped !== "object" || unwrapped === null) return null;
+
+  const status = (unwrapped as { status?: unknown }).status;
+  if (status === undefined || status === null) return null;
+
+  return status as PaymentStatusValue;
+}
+
+/** True when an error means "no such payment" rather than a transport failure. */
+function isPaymentNotFound(error: unknown): boolean {
+  if (error instanceof FluxapayError) {
+    return error.contractErrorName === "PaymentNotFound";
+  }
+  // Some bindings surface a missing entry as a plain message before the code
+  // mapper sees it.
+  const message = error instanceof Error ? error.message : String(error);
+  return /PaymentNotFound|payment not found|#404\b/i.test(message);
+}
+
+let defaultClientLocale = "en";
+
+export function setDefaultLocale(locale: string): void {
+  defaultClientLocale = locale;
+}
+
+export async function withMappedContractError<T>(
+  operation: () => Promise<T>,
+  locale?: string,
+): Promise<T> {
   try {
     return await operation();
   } catch (error) {
-    throw toFluxapayError(error);
+    throw toFluxapayError(error, locale ?? defaultClientLocale);
   }
 }
 
@@ -547,6 +793,7 @@ function resolveContractId(explicit: string | undefined, fallback: string, label
 export class FluxapayClient {
   public contract: ContractClient;
   public networkSwitcher: NetworkProfileSwitcher;
+  public readonly locale: string;
   private fxOracleClient?: FxOracleClient;
   private merchantRegistryClient?: MerchantRegistryClient;
   private paymentLinkManagerClient?: PaymentLinkManagerClient;
@@ -555,6 +802,8 @@ export class FluxapayClient {
 
   constructor(config: FluxapayConfig) {
     this.config = config;
+    this.locale = config.locale ?? "en";
+    setDefaultLocale(this.locale);
     this.networkSwitcher = new NetworkProfileSwitcher(config.network);
 
     const rpcUrl = config.rpcUrl || this.networkSwitcher.getProfile().rpcUrl;
@@ -678,6 +927,87 @@ export class FluxapayClient {
       this.contract.create_payment(toCreatePaymentArgs(params)),
     );
   }
+
+  /**
+   * Issue #771: Create up to 10 payment charges atomically in a single transaction.
+   * Wraps the `create_payment_batch` contract entry point.
+   */
+  async createPaymentBatch(params: CreatePaymentBatchParams): Promise<string[]> {
+    if (params.payments.length > 10) {
+      throw new FluxapayError(39, "BatchTooLarge", "createPaymentBatch accepts a maximum of 10 items per batch");
+    }
+    return withMappedContractError(async () => {
+      const result = await (this.contract as any).create_payment_batch({
+        merchant_id: params.merchantId,
+        payments: params.payments.map((p) => ({
+          payment_id: p.paymentId,
+          amount: p.amount,
+          currency: p.currency,
+          deposit_address: p.depositAddress,
+          expires_at: p.expiresAt,
+          duration_secs: p.durationSecs,
+          memo: p.memo,
+          memo_type: p.memoType,
+          token_address: p.tokenAddress,
+          client_token: p.clientToken,
+          metadata_hash: undefined,
+          metadata: p.metadata,
+          fee_waiver_code: p.feeWaiverCode,
+          payer: p.payer,
+          payer_muxed_id: p.payerMuxedId,
+        })),
+      });
+      return (result as any)?.result ?? result;
+    });
+  }
+
+  /**
+   * Issue #763: Permissionlessly expire a pending payment whose TTL has elapsed.
+   * Returns PaymentExpired error if the payment has not yet expired.
+   */
+  async expirePayment(paymentId: string): Promise<void> {
+    return withMappedContractError(async () => {
+      await (this.contract as any).expire_payment({ payment_id: paymentId });
+    });
+  }
+
+  /**
+   * Issue #856: Executes a token swap via DexRouter with slippage tolerance and max_slippage_bps guards.
+   */
+  async executeSwap(
+    params: {
+      caller: string;
+      tokenIn: string;
+      tokenOut: string;
+      amountIn: bigint;
+      minAmountOut: bigint;
+      maxSlippageBps: number;
+      dexRouterContractId?: string;
+    },
+    signerKeypair?: any,
+  ): Promise<bigint> {
+    if (params.maxSlippageBps > 5000) {
+      throw new FluxapayError(4, "SlippageExceeded", "maxSlippageBps cannot exceed 5000 (50%)");
+    }
+    const routerContractId = params.dexRouterContractId || this.config.contractId || UNSET_CONTRACT_ID;
+    const routerClient = new DexRouterClient({
+      network: this.config.network,
+      rpcUrl: this.config.rpcUrl,
+      contractId: routerContractId,
+    });
+    return routerClient.executeSwap(
+      {
+        caller: params.caller,
+        tokenIn: params.tokenIn,
+        tokenOut: params.tokenOut,
+        amountIn: params.amountIn,
+        minAmountOut: params.minAmountOut,
+        maxSlippageBps: params.maxSlippageBps,
+      },
+      signerKeypair,
+    );
+  }
+
 
   /**
    * Verify a payment via oracle
@@ -1103,7 +1433,47 @@ export class FluxapayClient {
   }
 
   /**
+   * Issue #854: Merchant creates a scoped API key.
+   */
+  async createApiKey(params: CreateApiKeyParams): Promise<ApiKeyRecord> {
+    return withMappedContractError(async () => {
+      const tx = await (this.contract as any).create_api_key({
+        merchant: params.merchant,
+        key_hash: params.keyHash,
+        scopes: params.scopes,
+      });
+      return tx?.result ?? tx;
+    });
+  }
+
+  /**
+   * Issue #854: Retrieve an API key record by its key hash.
+   */
+  async getApiKey(keyHash: string): Promise<ApiKeyRecord> {
+    return withMappedContractError(async () => {
+      const tx = await (this.contract as any).get_api_key({
+        key_hash: keyHash,
+      });
+      return tx?.result ?? tx;
+    });
+  }
+
+  /**
+   * Issue #854: Merchant revokes an active API key.
+   */
+  async revokeApiKey(merchant: string, keyHash: string): Promise<void> {
+    return withMappedContractError(async () => {
+      const tx = await (this.contract as any).revoke_api_key({
+        merchant,
+        key_hash: keyHash,
+      });
+      return tx?.result ?? tx;
+    });
+  }
+
+  /**
    * Get all refunds for a payment
+
    */
   async getPaymentRefunds(paymentId: string) {
     return withMappedContractError(() =>
@@ -1132,6 +1502,71 @@ export class FluxapayClient {
         disputer: params.disputer,
       }),
     );
+  }
+
+  /**
+   * Open a dispute with on-chain SHA-256 evidence hash verification (Issue #773).
+   * Accepts an optional evidenceHash (hex string, auto-decoded to 32 bytes).
+   */
+  async openDispute(params: {
+    paymentId: string | number;
+    amount: bigint | number;
+    reason?: string;
+    evidence?: string;
+    disputer?: string;
+    opener?: string;
+    evidenceHash?: string | Buffer | Uint8Array;
+    bondAmount?: bigint | number;
+  }) {
+    let hashBuf: Buffer;
+    if (params.evidenceHash) {
+      if (typeof params.evidenceHash === "string") {
+        hashBuf = Buffer.from(params.evidenceHash.replace(/^0x/, ""), "hex");
+      } else {
+        hashBuf = Buffer.from(params.evidenceHash);
+      }
+    } else {
+      const { createHash } = await import("node:crypto");
+      hashBuf = createHash("sha256").update(params.evidence ?? "").digest();
+    }
+
+    if (hashBuf.length !== 32) {
+      throw new Error(`evidenceHash must be 32 bytes (got ${hashBuf.length})`);
+    }
+
+    const caller = params.disputer || params.opener || "";
+    return withMappedContractError(async () => {
+      if (typeof (this.contract as any).open_dispute === "function") {
+        return (this.contract as any).open_dispute({
+          opener: caller,
+          payment_id: typeof params.paymentId === "number" ? BigInt(params.paymentId) : params.paymentId,
+          disputed_amount: BigInt(params.amount),
+          bond_amount: BigInt(params.bondAmount ?? 0),
+          evidence_hash: hashBuf,
+        });
+      }
+      return this.contract.create_dispute({
+        payment_id: String(params.paymentId),
+        amount: BigInt(params.amount),
+        reason: params.reason ?? "",
+        evidence: params.evidence ?? "",
+        disputer: caller,
+        evidence_hash: hashBuf,
+      });
+    });
+  }
+
+  /**
+   * Read-only view function to retrieve the stored SHA-256 evidence hash for a dispute (Issue #773).
+   */
+  async verifyEvidence(disputeId: string | number): Promise<string> {
+    return withMappedContractError(async () => {
+      const res = await (this.contract as any).verify_evidence({
+        dispute_id: typeof disputeId === "number" ? BigInt(disputeId) : disputeId,
+      });
+      const val = (res as { result?: any }).result ?? res;
+      return Buffer.from(val).toString("hex");
+    });
   }
 
   /**
@@ -1258,6 +1693,70 @@ export class FluxapayClient {
     );
   }
 
+  /**
+   * Issue #814: read the status of many payments in one round trip.
+   *
+   * Merchants reconciling orders were calling `getPayment` in a loop, which is
+   * N sequential RPC calls — latency scales linearly with the order book.
+   *
+   * @param paymentIds up to {@link MAX_BATCH_STATUS_IDS} IDs
+   * @returns a Map from payment ID to status, with `null` for IDs that do not
+   *          exist. A missing payment is an ordinary result here, not an error:
+   *          a merchant checking 50 orders should not lose the other 49 because
+   *          one ID was mistyped.
+   * @throws {BatchTooLargeError} if more than the limit is requested
+   *
+   * # Why the reads are issued concurrently rather than as one contract call
+   *
+   * A true single-invocation batch needs an on-chain view that takes a vector
+   * of IDs and returns a vector of statuses. `get_payment` takes one ID, so
+   * batching on-chain would mean a contract change and a redeploy. Issuing the
+   * reads concurrently against the same RPC gets the latency win — one round
+   * trip's worth of wall time instead of N — without touching the contract.
+   *
+   * If a `get_payment_summary`-style vector view lands later, this method's
+   * signature does not change; only its body does.
+   */
+  async getPaymentStatuses(
+    paymentIds: string[],
+  ): Promise<Map<string, PaymentStatusValue | null>> {
+    if (paymentIds.length > MAX_BATCH_STATUS_IDS) {
+      throw new BatchTooLargeError(paymentIds.length, MAX_BATCH_STATUS_IDS);
+    }
+
+    const results = new Map<string, PaymentStatusValue | null>();
+    if (paymentIds.length === 0) {
+      return results;
+    }
+
+    // Duplicates are collapsed so a caller passing the same ID twice does not
+    // pay for it twice; the returned Map is keyed by ID either way.
+    const unique = [...new Set(paymentIds)];
+
+    const settled = await Promise.all(
+      unique.map(async (id) => {
+        try {
+          const payment = await this.getPayment(id);
+          return { id, status: extractPaymentStatus(payment) };
+        } catch (error) {
+          // A not-found payment is reported as null. Anything else is a real
+          // failure and is rethrown, because silently mapping an RPC outage to
+          // "these 50 orders do not exist" would be far worse than an error.
+          if (isPaymentNotFound(error)) {
+            return { id, status: null };
+          }
+          throw error;
+        }
+      }),
+    );
+
+    for (const { id, status } of settled) {
+      results.set(id, status);
+    }
+
+    return results;
+  }
+
   async generateReconciliationReportPaginated(params: {
     merchantId: string;
     fromTs: bigint;
@@ -1267,7 +1766,6 @@ export class FluxapayClient {
   }) {
     return withMappedContractError(() =>
       (this.contract as any).generate_reconciliation_page({
-      (this.contract as any).reconciliation_report_page({
         merchant_id: params.merchantId,
         from_ts: params.fromTs,
         to_ts: params.toTs,
@@ -1539,6 +2037,9 @@ export class FluxapayClient {
       });
       return tx.result;
     });
+  }
+
+  /**
    * Issue #680: Resolve the configured backend API URL, throwing a clear
    * error if invoice methods are used without one.
    */
@@ -1825,22 +2326,14 @@ export class FluxapayClient {
    * Issue #679: Create a subscription plan (merchant only).
    * Maps to `PaymentProcessor.create_subscription_plan` on-chain.
    */
-  async createSubscriptionPlan(params: {
-    merchant: string;
-    planId: string;
-    name: string;
-    description: string;
-    amount: bigint;
-    currency: string;
-    billingInterval: "Daily" | "Weekly" | "Monthly" | "Annually";
-  }): Promise<void> {
+  async createSubscriptionPlan(params: CreatePlanParams): Promise<string> {
     const billingIntervalMap: Record<string, number> = {
       Daily: 0,
       Weekly: 1,
       Monthly: 2,
       Annually: 3,
     };
-    return withMappedContractError(() =>
+    await withMappedContractError(() =>
       (this.contract as any).create_subscription_plan({
         merchant: params.merchant,
         plan_id: params.planId,
@@ -1851,6 +2344,7 @@ export class FluxapayClient {
         billing_interval: billingIntervalMap[params.billingInterval] ?? 2,
       }),
     );
+    return params.planId;
   }
 
   /**
@@ -1858,7 +2352,7 @@ export class FluxapayClient {
    * Maps to `PaymentProcessor.get_subscription_plan` on-chain.
    */
   async getSubscriptionPlan(planId: string): Promise<SubscriptionPlan> {
-    const raw = await withMappedContractError(() =>
+    const raw: any = await withMappedContractError(() =>
       (this.contract as any).get_subscription_plan({ plan_id: planId }),
     );
     const p = raw.result;
@@ -1897,6 +2391,69 @@ export class FluxapayClient {
         payment_id: params.paymentId,
       }),
     );
+  }
+
+  /** Create a subscription and return its contract-generated ID. */
+  async subscribe(params: SubscribeParams): Promise<string> {
+    const raw: any = await withMappedContractError(() =>
+      (this.contract as any).subscribe({
+        payer: params.payer,
+        plan_id: params.planId,
+        max_payments: params.maxPayments ?? null,
+        affiliate: params.affiliate ?? null,
+        affiliate_fee_bps: params.affiliateFeeBps ?? null,
+      }),
+    );
+    return raw.result as string;
+  }
+
+  /**
+   * Charge a due subscription. This uses the contract's `process_subscription`
+   * entry point, which resolves the configured billing token internally.
+   */
+  async chargeSubscription(operator: string, subscriptionId: string): Promise<void> {
+    await withMappedContractError(() =>
+      (this.contract as any).process_subscription({
+        operator,
+        subscription_id: subscriptionId,
+      }),
+    );
+  }
+
+  async cancelSubscription(caller: string, subscriptionId: string): Promise<void> {
+    await withMappedContractError(() =>
+      (this.contract as any).cancel_subscription({
+        payer_or_merchant: caller,
+        subscription_id: subscriptionId,
+        refund_remaining: false,
+      }),
+    );
+  }
+
+  async pauseSubscription(caller: string, subscriptionId: string): Promise<void> {
+    await withMappedContractError(() =>
+      (this.contract as any).pause_subscription({ payer: caller, subscription_id: subscriptionId }),
+    );
+  }
+
+  async resumeSubscription(caller: string, subscriptionId: string): Promise<void> {
+    await withMappedContractError(() =>
+      (this.contract as any).resume_subscription({ payer: caller, subscription_id: subscriptionId }),
+    );
+  }
+
+  async getSubscription(subscriptionId: string): Promise<Subscription> {
+    const raw: any = await withMappedContractError(() =>
+      (this.contract as any).get_subscription({ subscription_id: subscriptionId }),
+    );
+    return fromContractSubscription(raw.result);
+  }
+
+  async getPayerSubscriptions(payer: string): Promise<Subscription[]> {
+    const raw: any = await withMappedContractError(() =>
+      (this.contract as any).get_payer_subscriptions({ payer }),
+    );
+    return (raw.result as Parameters<typeof fromContractSubscription>[0][]).map(fromContractSubscription);
   }
 
   /**
@@ -2072,23 +2629,20 @@ export class FluxapayClient {
   }
 }
 
-export { toFluxapayError, withMappedContractError };
-
 export {
-  Merchant,
-  PaymentCharge,
-  Refund,
-  Dispute,
-  PaymentStatus,
-  RefundStatus,
-  DisputeStatus,
-  FeeConfig,
-  MaybeFeeConfig,
-  CreatePaymentArgs,
-  SubscriptionPlan,
+  type Merchant,
+  type PaymentCharge,
+  type Refund,
+  type Dispute,
+  type PaymentStatus,
+  type RefundStatus,
+  type DisputeStatus,
+  type FeeConfig,
+  type MaybeFeeConfig,
+  type CreatePaymentArgs,
   FluxapayOfflineSigner,
-  OfflineTransactionPayload,
-  SubscriptionBillingClient,
+  type OfflineTransactionPayload,
+  type SubscriptionBillingClient,
   buildOfflinePayload,
   buildCreatePaymentPayload,
   buildVerifyPaymentPayload,
@@ -2098,13 +2652,9 @@ export {
   prepareForOfflineSigning,
   restoreFromOfflinePayload,
   NetworkProfileSwitcher,
-  NetworkEnvironment,
+  type NetworkEnvironment,
   NetworkProfiles,
-  NetworkProfile,
-  PaymentStream,
-  StreamStatus,
-  StreamError,
-  CreateStreamParams,
+  type NetworkProfile,
 };
 
 export { RefundManagerClient, type RefundManagerConfig } from "./contracts/refund-manager.js";
@@ -2137,6 +2687,142 @@ export {
   type GasEstimate,
   type GasOperation,
 } from "./contracts/gas-estimator.js";
+export {
+  AdminOpsClient,
+  type AdminOpsConfig,
+  type AdminAction,
+  type FeeSplitConfig,
+} from "./contracts/admin-ops.js";
+
+// Issue #765: Export typed event payload interfaces, events namespace, and parseFluxapayEvent helper
+export * as events from "./events.js";
+export {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type BaseFluxapayEvent,
+  type RawEventInput,
+  type PaymentCreatedEvent,
+  type PaymentCreatedPayload,
+  type PaymentConfirmedEvent,
+  type PaymentConfirmedPayload,
+  type PaymentVerifiedEvent,
+  type PaymentVerifiedPayload,
+  type PaymentSettledEvent,
+  type PaymentSettledPayload,
+  type PaymentCancelledEvent,
+  type PaymentCancelledPayload,
+  type PaymentExpiredEvent,
+  type PaymentExpiredPayload,
+  type PaymentPartiallyPaidEvent,
+  type PaymentPartiallyPaidPayload,
+  type PaymentOverpaidEvent,
+  type PaymentOverpaidPayload,
+  type PaymentFailedEvent,
+  type PaymentFailedPayload,
+  type RefundRequestedEvent,
+  type RefundRequestedPayload,
+  type RefundCreatedEvent,
+  type RefundCreatedPayload,
+  type RefundProcessedEvent,
+  type RefundProcessedPayload,
+  type RefundCompletedEvent,
+  type RefundCompletedPayload,
+  type RefundRejectedEvent,
+  type RefundRejectedPayload,
+  type DisputeCreatedEvent,
+  type DisputeCreatedPayload,
+  type DisputeReviewedEvent,
+  type DisputeReviewedPayload,
+  type DisputeResolvedEvent,
+  type DisputeResolvedPayload,
+  type DisputeRejectedEvent,
+  type DisputeRejectedPayload,
+  type DisputeEscalatedEvent,
+  type DisputeEscalatedPayload,
+  type DisputeBondReturnedEvent,
+  type DisputeBondReturnedPayload,
+  type DisputeBondForfeitedEvent,
+  type DisputeBondForfeitedPayload,
+  type MerchantRegisteredEvent,
+  type MerchantRegisteredPayload,
+  type MerchantUpdatedEvent,
+  type MerchantUpdatedPayload,
+  type MerchantVerifiedEvent,
+  type MerchantVerifiedPayload,
+  type MerchantSuspendedEvent,
+  type MerchantSuspendedPayload,
+  type MerchantReinstatedEvent,
+  type MerchantReinstatedPayload,
+  type KycTierUpgradedEvent,
+  type KycTierUpgradedPayload,
+  type LinkCreatedEvent,
+  type LinkCreatedPayload,
+  type LinkUsedEvent,
+  type LinkUsedPayload,
+  type LinkDeactivatedEvent,
+  type LinkDeactivatedPayload,
+  type LinkExpiredEvent,
+  type LinkExpiredPayload,
+  type LinkViewedEvent,
+  type LinkViewedPayload,
+  type SubscriptionCreatedEvent,
+  type SubscriptionCreatedPayload,
+  type SubscriptionChargedEvent,
+  type SubscriptionChargedPayload,
+  type SubscriptionCancelledEvent,
+  type SubscriptionCancelledPayload,
+  type SubscriptionExpiredEvent,
+  type SubscriptionExpiredPayload,
+  type StreamCreatedEvent,
+  type StreamCreatedPayload,
+  type StreamToppedUpEvent,
+  type StreamToppedUpPayload,
+  type StreamWithdrawnEvent,
+  type StreamWithdrawnPayload,
+  type StreamCancelledEvent,
+  type StreamCancelledPayload,
+  type StreamPausedEvent,
+  type StreamPausedPayload,
+  type StreamResumedEvent,
+  type StreamResumedPayload,
+  type StreamRateUpdatedEvent,
+  type StreamRateUpdatedPayload,
+  type StreamRateDecreasedEvent,
+  type StreamRateDecreasedPayload,
+  type StreamMilestoneApprovedEvent,
+  type StreamMilestoneApprovedPayload,
+  type StreamDestinationSetEvent,
+  type StreamDestinationSetPayload,
+  type StreamClosedEvent,
+  type StreamClosedPayload,
+  type RateUpdatedEvent,
+  type RateUpdatedPayload,
+  type RoleGrantedEvent,
+  type RoleGrantedPayload,
+  type RoleRevokedEvent,
+  type RoleRevokedPayload,
+  type AdminTransferProposedEvent,
+  type AdminTransferProposedPayload,
+  type AdminTransferCompletedEvent,
+  type AdminTransferCompletedPayload,
+  type AdminTransferCancelledEvent,
+  type AdminTransferCancelledPayload,
+  type FeeSplitUpdatedEvent,
+  type FeeSplitUpdatedPayload,
+  type TreasuryWithdrawnEvent,
+  type TreasuryWithdrawnPayload,
+  type ContractUpgradedEvent,
+  type ContractUpgradedPayload,
+  type InvoiceCreatedEvent,
+  type InvoiceCreatedPayload,
+  type InvoicePaidEvent,
+  type InvoicePaidPayload,
+  type InvoiceOverdueEvent,
+  type InvoiceOverduePayload,
+  type SwapExecutedEvent,
+  type SwapExecutedPayload,
+  type UnknownFluxapayEvent,
+} from "./events.js";
 
 
 

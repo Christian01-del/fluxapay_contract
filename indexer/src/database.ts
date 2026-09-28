@@ -24,6 +24,17 @@ export class Database {
     this.pool = new Pool({ connectionString });
   }
 
+  /**
+   * The underlying connection pool.
+   *
+   * Exposed so modules that own their own tables — the webhook store
+   * (Issues #808, #810) — can share this pool rather than opening a second
+   * one against the same database.
+   */
+  getPool(): Pool {
+    return this.pool;
+  }
+
   async initialize(): Promise<void> {
     try {
       const client = await this.pool.connect();
@@ -190,17 +201,51 @@ export class Database {
         );
         break;
 
-      case "streams":
+      case "streams": {
+        const subtype = event.topic[1];
+        if (subtype === "CANCELLED") {
+          await client.query(
+            `UPDATE streams SET status = 'Cancelled', updated_at = to_timestamp($2) WHERE stream_id = $1`,
+            [value.stream_id, event.timestamp]
+          );
+        } else if (subtype === "PAUSED") {
+          await client.query(
+            `UPDATE streams SET status = 'Paused', updated_at = to_timestamp($2) WHERE stream_id = $1`,
+            [value.stream_id, event.timestamp]
+          );
+        } else if (subtype === "RESUMED") {
+          await client.query(
+            `UPDATE streams SET status = 'Active', updated_at = to_timestamp($2) WHERE stream_id = $1`,
+            [value.stream_id, event.timestamp]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO streams (stream_id, sender, receiver, amount, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6))
+             ON CONFLICT (stream_id) DO UPDATE SET status = $5`,
+            [
+              value.stream_id,
+              value.sender,
+              value.receiver,
+              value.amount,
+              subtype === "CREATED" ? "Active" : subtype,
+              event.timestamp,
+            ]
+          );
+        }
+        break;
+      }
+
+      case "stream_withdrawals":
         await client.query(
-          `INSERT INTO streams (stream_id, sender, receiver, amount, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, to_timestamp($6))
-           ON CONFLICT (stream_id) DO UPDATE SET status = $5`,
+          `INSERT INTO stream_withdrawals (stream_id, recipient, amount, remaining_deposit, memo, created_at)
+           VALUES ($1, $2, $3, $4, $5, to_timestamp($6))`,
           [
-            value.stream_id,
-            value.sender,
-            value.receiver,
-            value.amount,
-            event.topic[1],
+            value.stream_id || (Array.isArray(value) ? value[0] : null),
+            value.recipient || value.destination || value.receiver || (Array.isArray(value) ? value[2] || value[1] : null),
+            value.amount || value.withdrawable || (Array.isArray(value) ? value[3] : null),
+            value.remaining_deposit || (Array.isArray(value) ? value[4] : null),
+            value.memo !== undefined ? value.memo : null,
             event.timestamp,
           ]
         );

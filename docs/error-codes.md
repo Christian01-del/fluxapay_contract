@@ -71,12 +71,15 @@ document on every CI run to catch drift between them.
 | 59 | `LinkMaxUsesReached` | Payment link has reached its configured `max_uses` limit. | Payment link was used too many times. | Create a new payment link with a higher `max_uses`. |
 | 60 | `DirectTransferNotDisputable` | Payment was created via a `direct_transfer` link and disputes are not allowed. | Attempting to dispute a direct-transfer payment. | Direct-transfer payments are non-disputable by design. |
 | 61 | `MaxRetriesExceeded` | Maximum retry chain depth (3) exceeded for payment retry. | Payment retry chain too deep. | Resolve the underlying payment failure before retrying. |
+| 347 | `RetryChainTooDeep` | A retry would create a chain deeper than three payments. | Retrying a payment that is already three links from its original payment. | Resolve the failure or start a new payment. |
 | 62 | `InvalidStatusTransition` | Invalid payment status transition attempted. | Attempting a disallowed state change (e.g. `Confirmed` → `Pending`). | Check the payment's current status and allowed transitions. |
 | 63 | `RefundNotApproved` | Customer called `claim_refund` before an operator approved it. | Claiming a refund that hasn't been operator-approved yet. | Wait for an operator to approve the refund first. |
 | 64 | `RouterNotAllowed` | DEX router is not in the allowed routers list. | Using a router not configured for this deployment. | Use an approved router, or have an admin update the allowed list. |
 | 65 | `RouteOutputInsufficient` | Aggregate route output is less than minimum output amount. | Swap output too low due to slippage or thin liquidity. | Re-quote with a lower minimum output, or reduce trade size. |
 | 66 | `BatchContainsDuplicates` | Batch payment creation contains duplicate payment IDs. | Submitting a batch where two or more entries share the same `payment_id`. | Ensure all `payment_id` values in the batch are unique. |
 | 67 | `InputTooLong` | A user-supplied string field exceeds its maximum allowed length. | `reason` > 256 chars in refund creation; `evidence` > 512 chars in dispute creation; `resolution_notes` > 512 chars in dispute rejection. | Shorten the field: `reason` ≤ 256 chars, `evidence` ≤ 512 chars, `resolution_notes` ≤ 512 chars. |
+| 68 | `TimelockNotExpired` | A timelocked admin action was executed before delay expired. | Executing action before timelock delay has elapsed. | Wait for the delay period to elapse. |
+| 69 | `InvalidEvidenceCid` | Evidence field is not a valid IPFS CID. | Passing a non-CID string as dispute evidence. | Pass a valid IPFS CID (v0 starting with Qm or v1 starting with bafy). |
 | 404 | `PaymentNotFound` | No payment exists with the given `payment_id`. | Typo'd ID, or payment was never created. | Verify the ID via `get_payment` / listing endpoints. |
 | 405 | `RefundNotFound` | No refund exists with the given `refund_id`. | Typo'd ID, or refund was never created. | Verify the ID via `get_refund` / `get_payment_refunds`. |
 | 406 | `InvalidAmount` | Amount is zero, negative, or otherwise invalid. | Passing a non-positive amount to a payment/refund call. | Pass a strictly positive `i128` amount. |

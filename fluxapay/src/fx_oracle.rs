@@ -25,6 +25,13 @@ const INVERSE_RATE_DECIMALS: u32 = 14;
 /// Soroban `Symbol` limit of 32 characters).
 const MAX_PAIR_SYMBOL_LEN: usize = 32;
 
+/// Issue #811: Hard cap on the token allowlist.
+///
+/// Bounds the linear scan every `set_rate` performs. Without a cap, an admin
+/// could grow the list until the scan alone exhausted the instruction budget —
+/// which would brick rate publishing rather than merely slow it.
+const MAX_ALLOWED_TOKENS: u32 = 50;
+
 #[contract]
 pub struct FXOracle;
 
@@ -70,6 +77,8 @@ pub enum OracleDataKey {
     MaxDeviation(Symbol),
     Quorum,
     Submissions(Symbol),
+    /// Issue #811: `Vec<Symbol>` of tokens a rate may be published against.
+    AllowedTokens,
 }
 
 #[cfg_attr(
@@ -83,6 +92,26 @@ impl FXOracle {
     }
 
     pub fn oracle_initialize(env: Env, admin: Address, staleness_threshold: u64) {
+        let empty = Vec::new(&env);
+        Self::oracle_initialize_with_tokens(env, admin, staleness_threshold, empty);
+    }
+
+    /// Issue #811: Initialise with a populated token allowlist.
+    ///
+    /// Separate entry point rather than a changed signature on
+    /// `oracle_initialize`, which is called from deployment scripts, tests and
+    /// the SDK. Breaking all of them to add an argument most callers can supply
+    /// afterwards via `add_allowed_token` would be a poor trade.
+    ///
+    /// An **empty** allowlist means "not yet configured", and rate publishing is
+    /// allowed through — see `require_pair_allowed` for why that default is the
+    /// safe one here rather than the reverse.
+    pub fn oracle_initialize_with_tokens(
+        env: Env,
+        admin: Address,
+        staleness_threshold: u64,
+        allowed_tokens: Vec<Symbol>,
+    ) {
         AccessControl::initialize(&env, admin);
         let threshold = staleness_threshold.clamp(MIN_RATE_AGE_SECS, MAX_RATE_AGE_SECS);
         env.storage()
@@ -120,6 +149,11 @@ impl FXOracle {
         if !AccessControl::has_role(&env, &role_oracle(&env), &operator) {
             return Err(FXOracleError::Unauthorized);
         }
+
+        // Issue #811: checked before the quorum bookkeeping, so a disallowed
+        // pair cannot accumulate submissions and then be rejected only once
+        // quorum is reached.
+        Self::require_pair_allowed(&env, &pair)?;
 
         let quorum = env
             .storage()
@@ -200,8 +234,23 @@ impl FXOracle {
             return Err(FXOracleError::Unauthorized);
         }
 
+        // Issue #851: Reject empty batches immediately. Submitting an empty batch
+        // wastes transaction fees and ledger bandwidth while performing no useful state
+        // mutations. Enforcing this prevents silent no-ops when an operator submits zero rates.
+        if rates.is_empty() {
+            return Err(FXOracleError::EmptyBatch);
+        }
+
         if rates.len() > MAX_BATCH_RATES {
             return Err(FXOracleError::BatchTooLarge);
+        }
+
+        // Issue #811: every pair is validated before any is written, so a batch
+        // containing one disallowed pair does not half-apply. `store_rate` has
+        // already mutated state by the time a later entry fails, and Soroban
+        // gives us no partial rollback inside a call.
+        for (pair, _, _) in rates.iter() {
+            Self::require_pair_allowed(&env, &pair)?;
         }
 
         let count = rates.len();
