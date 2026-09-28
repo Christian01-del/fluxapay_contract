@@ -22,7 +22,10 @@ pub mod merchant_auth;
 mod payment_state_machine;
 pub mod stream;
 
-pub use stream::{PaymentStream, PaymentStreaming, StreamDataKey, StreamError, StreamStatus};
+pub use stream::{
+    MultiPaymentStream, PayeeAllocation, PaymentStream, PaymentStreaming, StreamDataKey,
+    StreamError, StreamStatus, MAX_MULTI_PAYEES, MULTI_STREAM_SHARE_TOTAL,
+};
 
 pub use access_control::AccessControlDataKey;
 pub use access_control::{AdminAction, AdminProposal};
@@ -3113,6 +3116,17 @@ pub use merchant_registry::{
             .persistent()
             .set(&dispute_count_key, &new_dispute_count);
         Self::bump_ttl(env, &dispute_count_key, LONG_LIVE_TTL);
+
+        // Issue #833: Cross-call MerchantRegistry so KYC scoring sees the dispute.
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+        }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
         let payment_count: u64 = env
@@ -11169,6 +11183,47 @@ impl PaymentProcessor {
             stream_id,
             None,
         )
+    }
+
+    /// Issue #831: Create a multi-payee stream (shares must sum to 10_000 bps, max 10 payees).
+    pub fn create_multi_stream(
+        env: Env,
+        sender: Address,
+        token: Address,
+        deposit: i128,
+        rate_per_second: i128,
+        payees: Vec<PayeeAllocation>,
+    ) -> Result<String, StreamError> {
+        if Self::is_blacklisted_address(&env, &sender) {
+            return Err(StreamError::Unauthorized);
+        }
+        for i in 0..payees.len() {
+            let payee = payees.get(i).unwrap();
+            if Self::is_blacklisted_address(&env, &payee.address) {
+                return Err(StreamError::Unauthorized);
+            }
+        }
+        PaymentStreaming::create_multi_stream(
+            env,
+            sender,
+            token,
+            deposit,
+            rate_per_second,
+            payees,
+        )
+    }
+
+    /// Issue #831: Withdraw and distribute proportionally to all multi-stream payees.
+    pub fn withdraw_multi_stream(env: Env, stream_id: String) -> Result<(), StreamError> {
+        PaymentStreaming::withdraw_multi_stream(env, stream_id)
+    }
+
+    /// Issue #831: Read a multi-payee stream by ID.
+    pub fn get_multi_stream(
+        env: Env,
+        stream_id: String,
+    ) -> Result<MultiPaymentStream, StreamError> {
+        PaymentStreaming::get_multi_stream(env, stream_id)
     }
 
     pub fn top_up_stream(

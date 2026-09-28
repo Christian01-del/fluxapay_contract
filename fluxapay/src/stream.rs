@@ -88,10 +88,43 @@ pub struct PaymentStream {
     pub milestones_approved: bool,
 }
 
+/// Weighted payee for a multi-recipient stream (issue #831).
+///
+/// `share_bps` is in basis points; all payee shares on a stream must sum to
+/// exactly [`MULTI_STREAM_SHARE_TOTAL`] (10_000 = 100%).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PayeeAllocation {
+    pub address: Address,
+    pub share_bps: u32,
+}
+
+/// A continuous payment stream that splits accrual across multiple payees.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiPaymentStream {
+    pub stream_id: String,
+    pub sender: Address,
+    pub payees: Vec<PayeeAllocation>,
+    pub token: Address,
+    pub rate_per_second: i128,
+    pub remaining_deposit: i128,
+    pub last_checkpoint_at: u64,
+    pub accrued_at_checkpoint: i128,
+    pub status: StreamStatus,
+}
+
+/// Maximum number of payees allowed on a multi-payee stream.
+pub const MAX_MULTI_PAYEES: u32 = 10;
+/// Required sum of all `share_bps` values on a multi-payee stream.
+pub const MULTI_STREAM_SHARE_TOTAL: u32 = 10_000;
+
 /// Storage key for a [`PaymentStream`].
 #[contracttype]
 pub enum StreamDataKey {
     Stream(String),
+    MultiStream(String),
+    MultiStreamCounter,
     StreamFeeBps,
     StreamFeeRecipient,
 }
@@ -140,6 +173,14 @@ pub enum StreamError {
     InvalidReceiver = 14,
     /// Issue #627: A bulk operation was passed more stream IDs than the per-call cap.
     BatchTooLarge = 15,
+    /// Issue #831: Multi-payee stream has zero payees.
+    EmptyPayees = 16,
+    /// Issue #831: Multi-payee stream exceeds [`MAX_MULTI_PAYEES`].
+    TooManyPayees = 17,
+    /// Issue #831: Payee `share_bps` values must sum to exactly 10_000.
+    InvalidPayeeShares = 18,
+    /// Issue #831: Requested stream is not a multi-payee stream.
+    NotMultiStream = 19,
 }
 
 /// Issue #627: Maximum number of stream IDs accepted by `bulk_bump_stream_ttls`
@@ -1530,5 +1571,212 @@ impl PaymentStreaming {
         );
 
         Ok(bumped)
+    }
+
+    // ─── Multi-payee streams (issue #831) ─────────────────────────────────────
+
+    /// Create a stream that splits accrual across up to [`MAX_MULTI_PAYEES`]
+    /// weighted payees. All `share_bps` values must sum to
+    /// [`MULTI_STREAM_SHARE_TOTAL`] (10_000).
+    ///
+    /// Returns the auto-generated `stream_id`.
+    pub fn create_multi_stream(
+        env: Env,
+        sender: Address,
+        token: Address,
+        deposit: i128,
+        rate_per_second: i128,
+        payees: Vec<PayeeAllocation>,
+    ) -> Result<String, StreamError> {
+        sender.require_auth();
+        require_not_paused(&env)?;
+
+        if rate_per_second <= 0 {
+            return Err(StreamError::InvalidRate);
+        }
+        if deposit <= 0 {
+            return Err(StreamError::InvalidDeposit);
+        }
+        if payees.is_empty() {
+            return Err(StreamError::EmptyPayees);
+        }
+        if payees.len() > MAX_MULTI_PAYEES {
+            return Err(StreamError::TooManyPayees);
+        }
+
+        let mut share_sum: u32 = 0;
+        for i in 0..payees.len() {
+            let payee = payees.get(i).unwrap();
+            if payee.share_bps == 0 {
+                return Err(StreamError::InvalidPayeeShares);
+            }
+            if payee.address == sender {
+                return Err(StreamError::InvalidReceiver);
+            }
+            share_sum = share_sum.saturating_add(payee.share_bps);
+        }
+        if share_sum != MULTI_STREAM_SHARE_TOTAL {
+            return Err(StreamError::InvalidPayeeShares);
+        }
+
+        let counter: u64 = env
+            .storage()
+            .persistent()
+            .get(&StreamDataKey::MultiStreamCounter)
+            .unwrap_or(0u64)
+            + 1;
+        env.storage()
+            .persistent()
+            .set(&StreamDataKey::MultiStreamCounter, &counter);
+
+        let stream_id = crate::utils::format_id(&env, "mstream", counter);
+        let now = env.ledger().timestamp();
+
+        let stream = MultiPaymentStream {
+            stream_id: stream_id.clone(),
+            sender: sender.clone(),
+            payees: payees.clone(),
+            token: token.clone(),
+            rate_per_second,
+            remaining_deposit: deposit,
+            last_checkpoint_at: now,
+            accrued_at_checkpoint: 0,
+            status: StreamStatus::Active,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&StreamDataKey::MultiStream(stream_id.clone()), &stream);
+        append_sender_stream(&env, &sender, &stream_id);
+        for i in 0..payees.len() {
+            let payee = payees.get(i).unwrap();
+            append_recipient_stream(&env, &payee.address, &stream_id);
+        }
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&sender, &env.current_contract_address(), &deposit);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "STREAM"),
+                Symbol::new(&env, "MULTI_CREATED"),
+            ),
+            (stream_id.clone(), sender, deposit, payees.len()),
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Withdraw accrued funds from a multi-payee stream, distributing the
+    /// withdrawable amount to every payee in proportion to `share_bps`.
+    ///
+    /// Transfers are atomic within the call: all payees receive their share
+    /// before the function returns. Dust from integer division is given to the
+    /// last payee so the full withdrawable amount is distributed.
+    pub fn withdraw_multi_stream(
+        env: Env,
+        stream_id: String,
+    ) -> Result<(), StreamError> {
+        require_not_paused(&env)?;
+
+        let mut stream: MultiPaymentStream = env
+            .storage()
+            .persistent()
+            .get(&StreamDataKey::MultiStream(stream_id.clone()))
+            .ok_or(StreamError::NotMultiStream)?;
+
+        if stream.status != StreamStatus::Active {
+            return Err(StreamError::StreamNotActive);
+        }
+
+        acquire_lock(&env, &stream_id)?;
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(stream.last_checkpoint_at);
+        let newly_accrued = (elapsed as i128)
+            .saturating_mul(stream.rate_per_second)
+            .min(stream.remaining_deposit.saturating_sub(stream.accrued_at_checkpoint));
+
+        stream.accrued_at_checkpoint = stream.accrued_at_checkpoint.saturating_add(newly_accrued);
+        stream.last_checkpoint_at = now;
+
+        let withdrawable = stream
+            .accrued_at_checkpoint
+            .min(stream.remaining_deposit)
+            .max(0);
+
+        if withdrawable == 0 {
+            release_lock(&env, &stream_id);
+            env.storage()
+                .persistent()
+                .set(&StreamDataKey::MultiStream(stream_id), &stream);
+            return Ok(());
+        }
+
+        stream.accrued_at_checkpoint = stream
+            .accrued_at_checkpoint
+            .saturating_sub(withdrawable);
+        stream.remaining_deposit = stream.remaining_deposit.saturating_sub(withdrawable);
+        if stream.remaining_deposit == 0 {
+            stream.status = StreamStatus::Exhausted;
+        }
+
+        env.storage()
+            .persistent()
+            .set(&StreamDataKey::MultiStream(stream_id.clone()), &stream);
+
+        let token_client = token::Client::new(&env, &stream.token);
+        let fee_bps = get_stream_fee_bps(&env);
+        let (fee, net) = apply_fee(withdrawable, fee_bps);
+        if fee > 0 {
+            let fee_recipient = get_stream_fee_recipient(&env)
+                .or_else(|| crate::access_control::AccessControl::get_admin(&env));
+            if let Some(recipient) = fee_recipient {
+                token_client.transfer(&env.current_contract_address(), &recipient, &fee);
+            }
+        }
+
+        let payee_count = stream.payees.len();
+        let mut distributed: i128 = 0;
+        for i in 0..payee_count {
+            let payee = stream.payees.get(i).unwrap();
+            let amount = if i + 1 == payee_count {
+                // Last payee receives remainder to avoid dust loss.
+                net.saturating_sub(distributed)
+            } else {
+                (net.saturating_mul(payee.share_bps as i128)) / (MULTI_STREAM_SHARE_TOTAL as i128)
+            };
+            distributed = distributed.saturating_add(amount);
+            if amount > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &payee.address,
+                    &amount,
+                );
+            }
+        }
+
+        release_lock(&env, &stream_id);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "STREAM"),
+                Symbol::new(&env, "MULTI_WITHDRAWN"),
+            ),
+            (stream_id, withdrawable, stream.remaining_deposit),
+        );
+
+        Ok(())
+    }
+
+    /// Read a multi-payee stream by ID.
+    pub fn get_multi_stream(
+        env: Env,
+        stream_id: String,
+    ) -> Result<MultiPaymentStream, StreamError> {
+        env.storage()
+            .persistent()
+            .get(&StreamDataKey::MultiStream(stream_id))
+            .ok_or(StreamError::NotMultiStream)
     }
 }

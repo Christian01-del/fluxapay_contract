@@ -1725,13 +1725,19 @@ impl MerchantRegistry {
         Ok(())
     }
 
-    /// Issue #184: Get the current dispute count for a merchant.
-    /// Returns 0 if no disputes have been filed against this merchant.
+    /// Issue #184 / #833: Get the current dispute count for a merchant.
+    ///
+    /// Returns the on-chain `Merchant.dispute_count` field, which is incremented
+    /// via [`Self::increment_merchant_dispute_count`] when a dispute is opened.
+    /// This is a lifetime total used for KYC scoring — it does **not** decrement
+    /// when a dispute is resolved in the merchant's favour (active-dispute
+    /// tracking for suspension lives separately in RefundManager's
+    /// `MerchantDisputeCount` key).
     pub fn get_merchant_dispute_count(env: Env, merchant_id: Address) -> u64 {
-        // This is stored in the RefundManager, not here — expose a no-op placeholder
-        // so the SDK surface is consistent. Actual counts live in DataKey::MerchantDisputeCount.
-        let _ = (env, merchant_id);
-        0
+        match Self::get_merchant_internal(&env, &merchant_id) {
+            Ok(merchant) => merchant.dispute_count as u64,
+            Err(_) => 0,
+        }
     }
 
     /// Upgrade the contract WASM.

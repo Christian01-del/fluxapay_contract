@@ -374,6 +374,12 @@ Current behavior:
 - dispute rate is measured against total payment count
 - if the rate exceeds 10% after enough payments are recorded, the merchant is auto-suspended
 - rejected disputes are not counted against the merchant's active dispute threshold once rejected
+- **Issue #833**: Opening a dispute also increments `MerchantRegistry.dispute_count` via
+  `increment_merchant_dispute_count`. `get_merchant_dispute_count` returns that field for
+  KYC scoring. **Decision**: the registry count is a **lifetime total** and does **not**
+  decrement when a dispute is resolved in the merchant's favour. Active/open dispute
+  accounting for suspension continues to use RefundManager's separate
+  `MerchantDisputeCount` key (which does decrement on reject).
 
 This is important for merchants operating high-volume marketplaces: a rising dispute rate may lead to temporary suspension or operational review, even before a human review escalates the case.
 

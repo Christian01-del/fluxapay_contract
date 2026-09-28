@@ -226,6 +226,49 @@ This ensures the receiver keeps what has already been earned while the sender ge
 
 ---
 
+## 5.1) Multi-payee streams (issue #831)
+
+Payroll and revenue-share flows can fund **one** stream that splits accrual across
+up to **10** weighted payees. All `share_bps` values must sum to exactly **10_000**
+(100%). Each `withdraw_multi_stream` call distributes the currently accrued amount
+proportionally to every payee in a single atomic transaction.
+
+### Create
+
+```typescript
+// Soroban / contract call shape
+create_multi_stream(
+  sender,
+  token,
+  deposit,          // i128
+  rate_per_second,  // i128
+  [
+    { address: payeeA, share_bps: 6000 }, // 60%
+    { address: payeeB, share_bps: 4000 }, // 40%
+  ],
+); // → stream_id: String
+```
+
+### Withdraw
+
+```typescript
+withdraw_multi_stream(stream_id);
+// Payee A receives 60% of accrued, Payee B receives 40%.
+// Integer dust goes to the last payee so the full net amount is distributed.
+```
+
+Constraints enforced on-chain:
+
+| Rule | Error |
+|------|-------|
+| `payees` empty | `EmptyPayees` |
+| more than 10 payees | `TooManyPayees` |
+| `share_bps` sum ≠ 10_000 (or any share is 0) | `InvalidPayeeShares` |
+
+The existing single-payee `create_stream` / withdraw API is unchanged.
+
+---
+
 ## 6) Operational guidance for production
 
 ### Recommended merchant flow

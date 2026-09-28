@@ -1322,6 +1322,78 @@ fn test_batch_create_disputes_rejects_oversized() {
     assert_eq!(result2, Err(Ok(crate::Error::BatchTooLarge)));
 }
 
+/// Issue #833: open_dispute cross-calls MerchantRegistry.increment_merchant_dispute_count
+/// so get_merchant_dispute_count returns a non-zero value.
+#[test]
+fn test_open_dispute_increments_merchant_registry_dispute_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, payment_client, refund_client) = setup_contracts(&env);
+
+    let registry_id = env.register(crate::merchant_registry::MerchantRegistry, ());
+    let registry_client =
+        crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_id);
+    registry_client.initialize(&admin);
+
+    // Wire RefundManager → MerchantRegistry for the cross-call.
+    env.as_contract(&refund_client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::MerchantRegistryAddress, &registry_id);
+    });
+
+    let merchant = Address::generate(&env);
+    let customer = Address::generate(&env);
+    let payment_id = String::from_str(&env, "disp_count_833");
+    let amount = 1000i128;
+
+    registry_client.register_merchant(
+        &merchant,
+        &String::from_str(&env, "Dispute Count Merchant"),
+        &String::from_str(&env, "USDC"),
+        &None,
+        &None,
+        &crate::merchant_registry::MaybeFeeConfig::None,
+    );
+
+    assert_eq!(registry_client.get_merchant_dispute_count(&merchant), 0);
+
+    payment_client.grant_role(&admin, &Symbol::new(&env, "MERCHANT"), &merchant);
+    payment_client.create_payment(&create_payment_args(&env, &payment_id, &merchant, amount));
+
+    let oracle = Address::generate(&env);
+    payment_client.grant_role(&admin, &Symbol::new(&env, "ORACLE"), &oracle);
+    payment_client.verify_payment(
+        &oracle,
+        &payment_id,
+        &BytesN::from_array(&env, &[8u8; 32]),
+        &customer,
+        &amount,
+        &None::<u64>,
+    );
+
+    let token_address = env.as_contract(&refund_client.address, || {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::UsdcToken)
+            .unwrap()
+    });
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
+    token_admin_client.mint(&customer, &100_000);
+    token_admin_client.mint(&merchant, &100_000);
+
+    refund_client.register_payment(&payment_id, &merchant, &amount, &Symbol::new(&env, "USDC"));
+    refund_client.create_dispute(
+        &payment_id,
+        &amount,
+        &String::from_str(&env, "Issue 833 dispute"),
+        &String::from_str(&env, "f000000000000000000000000000000000"),
+        &customer,
+        &vec![&env],
+    );
+
+    assert_eq!(registry_client.get_merchant_dispute_count(&merchant), 1);
 /// Issue #843: a small-stake arbitrator is outvoted by a large-stake arbitrator
 /// under weighted quorum (not raw vote count).
 #[test]
