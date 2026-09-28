@@ -388,7 +388,7 @@ proptest! {
 
         let payment_id = format_id(&env, "refund_inv_", nonce);
         let merchant_id = Address::generate(&env);
-        let requester = Address::generate(&env);
+        let requester = merchant_id.clone();
 
         client.register_payment(
             &payment_id,
@@ -468,7 +468,7 @@ proptest! {
         // all targeting the same payment_id before any are approved/rejected.
         let mut accepted_total: i128 = 0;
         for &amount in refund_amounts.iter() {
-            let requester = Address::generate(&env);
+            let requester = merchant_id.clone();
             let reason = soroban_sdk::String::from_str(&env, "concurrent refund");
             let result = client.try_create_refund(&payment_id, &amount, &reason, &requester);
 

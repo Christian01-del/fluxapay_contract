@@ -509,6 +509,146 @@ export function useMarkInvoicePaid(): UseMarkInvoicePaidResult {
   return { mutate, status, loading: status === "loading", error };
 }
 
+export interface UsePaymentStatusOptions {
+  /** Initial polling interval in milliseconds. Defaults to 2000. */
+  pollIntervalMs?: number;
+  /** Maximum backoff interval cap in milliseconds. Defaults to 30000. */
+  maxBackoffMs?: number;
+  /** Terminal statuses that stop polling automatically. Defaults to ['confirmed', 'failed', 'expired']. */
+  stopOnStatuses?: (PaymentStatus | string)[];
+}
+
+export interface UsePaymentStatusResult {
+  status: string | undefined;
+  payment: PaymentCharge | undefined;
+  error: FluxapayError | undefined;
+  loading: boolean;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Issue #769: React hook for real-time payment status polling with exponential backoff.
+ * Starts polling immediately, doubles interval after each non-terminal status response up to `maxBackoffMs`.
+ * Stops polling when status reaches a terminal state or the component unmounts.
+ */
+export function usePaymentStatus(
+  paymentId: string | undefined,
+  options?: UsePaymentStatusOptions,
+): UsePaymentStatusResult {
+  const client = useFluxapayClient();
+  const pollIntervalMs = options?.pollIntervalMs ?? 2000;
+  const maxBackoffMs = options?.maxBackoffMs ?? 30000;
+  const stopOnStatuses = React.useMemo(() => {
+    const list = options?.stopOnStatuses ?? ["confirmed", "failed", "expired"];
+    return list.map((s) => (typeof s === "string" ? s.toLowerCase() : String(s).toLowerCase()));
+  }, [options?.stopOnStatuses]);
+
+  const [payment, setPayment] = React.useState<PaymentCharge | undefined>(undefined);
+  const [status, setStatus] = React.useState<string | undefined>(undefined);
+  const [error, setError] = React.useState<FluxapayError | undefined>(undefined);
+  const [loading, setLoading] = React.useState<boolean>(!!paymentId);
+
+  const currentIntervalRef = React.useRef<number>(pollIntervalMs);
+  const isStoppedRef = React.useRef<boolean>(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = React.useRef<boolean>(true);
+
+  React.useEffect(() => {
+    currentIntervalRef.current = pollIntervalMs;
+    isStoppedRef.current = false;
+  }, [pollIntervalMs, paymentId]);
+
+  const fetchStatus = React.useCallback(
+    async (isManualRefetch = false) => {
+      if (!paymentId) return;
+      if (isManualRefetch) {
+        currentIntervalRef.current = pollIntervalMs;
+        isStoppedRef.current = false;
+      }
+
+      try {
+        setLoading(true);
+        const res = (await client.getPayment(paymentId)) as unknown as PaymentCharge;
+        if (!isMountedRef.current) return;
+
+        setPayment(res);
+        setError(undefined);
+
+        let rawStatus: string = "";
+        if (typeof res?.status === "string") {
+          rawStatus = res.status;
+        } else if (
+          typeof res?.status === "object" &&
+          res?.status !== null &&
+          "tag" in (res.status as any)
+        ) {
+          rawStatus = (res.status as any).tag;
+        } else {
+          rawStatus = String(res?.status ?? "");
+        }
+
+        const normalizedStatus = rawStatus.toLowerCase();
+        setStatus(rawStatus);
+
+        if (stopOnStatuses.includes(normalizedStatus)) {
+          isStoppedRef.current = true;
+        } else {
+          currentIntervalRef.current = Math.min(currentIntervalRef.current * 2, maxBackoffMs);
+        }
+      } catch (err) {
+        if (!isMountedRef.current) return;
+        const normalized = toFluxapayError(err);
+        setError(normalized);
+        currentIntervalRef.current = Math.min(currentIntervalRef.current * 2, maxBackoffMs);
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [client, paymentId, pollIntervalMs, maxBackoffMs, stopOnStatuses],
+  );
+
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    if (!paymentId) {
+      setLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const runPoll = async () => {
+      if (isCancelled || isStoppedRef.current) return;
+      await fetchStatus(false);
+      if (isCancelled || isStoppedRef.current) return;
+
+      timerRef.current = setTimeout(runPoll, currentIntervalRef.current);
+    };
+
+    runPoll();
+
+    return () => {
+      isCancelled = true;
+      isMountedRef.current = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [paymentId, fetchStatus]);
+
+  const refetch = React.useCallback(async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    await fetchStatus(true);
+  }, [fetchStatus]);
+
+  return { status, payment, error, loading, refetch };
+}
+
 export { usePaymentEvents } from "./usePaymentEvents.js";
 export type {
   PaymentEvent,
