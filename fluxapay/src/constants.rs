@@ -4,6 +4,10 @@ pub const PAYMENT_TOLERANCE: i128 = 1;
 pub const SHORT_LIVE_TTL: u32 = 120_960; // ~1 week at 5s/ledger
 pub const LONG_LIVE_TTL: u32 = 18_921_600; // ~3 years at 5s/ledger
 pub const TTL_BUMP_THRESHOLD_DIVISOR: u32 = 5;
+/// Issue #768: Minimum persistent storage TTL for completed payment records (~120 days at 5s/ledger).
+pub const MIN_PERSISTENT_TTL: u32 = (120 * 24 * 60 * 60) / 5; // 2_073_600 ledgers
+/// Issue #768: Minimum TTL threshold before extending persistent payment records (~30 days at 5s/ledger).
+pub const MIN_BUMP_TTL: u32 = (30 * 24 * 60 * 60) / 5; // 518_400 ledgers
 pub const CREATE_PAYMENT_WINDOW_SECS: u64 = 60;
 pub const CREATE_PAYMENT_MAX_PER_WINDOW: u32 = 30;
 pub const DEFAULT_PAYMENT_DURATION_SECS: u64 = 3_600;
@@ -58,6 +62,14 @@ pub const TIER_CAP_BASIC: i128 = 100_000_000_000; // $10,000
 pub const TIER_CAP_FULL: i128 = 1_000_000_000_000; // $100,000
 pub const TIER_CAP_BUSINESS: i128 = i128::MAX; // unlimited
 
+// Issue #777: KYC tier per-payment and monthly volume limits (in USDC stroops, 7 decimals, ADR-0003)
+pub const TIER_0_MAX_SINGLE: i128 = 1_000_000_000; // 100 USDC
+pub const TIER_0_MAX_MONTHLY: i128 = 5_000_000_000; // 500 USDC
+pub const TIER_1_MAX_SINGLE: i128 = 100_000_000_000; // 10,000 USDC
+pub const TIER_1_MAX_MONTHLY: i128 = 500_000_000_000; // 50,000 USDC
+pub const TIER_2_MAX_SINGLE: i128 = i128::MAX; // Unlimited
+pub const TIER_2_MAX_MONTHLY: i128 = i128::MAX; // Unlimited
+
 // Issue #207: Cumulative volume thresholds for automatic KYC tier upgrades (in USDC stroops)
 pub const TIER_UPGRADE_THRESHOLD_BASIC: i128 = TIER_CAP_UNVERIFIED; // $500 cumulative → Basic
 pub const TIER_UPGRADE_THRESHOLD_FULL: i128 = TIER_CAP_BASIC; // $10,000 cumulative → Full
@@ -67,6 +79,10 @@ pub const TIER_UPGRADE_THRESHOLD_BUSINESS: i128 = TIER_CAP_FULL; // $100,000 cum
 pub const SUBSCRIPTION_MAX_RETRIES: u32 = 3;
 /// Spacing between retry attempts in seconds (2 days).
 pub const SUBSCRIPTION_RETRY_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
+/// Issue #836: Maximum allowed free-trial length for a subscription plan (days).
+pub const MAX_TRIAL_DAYS: u32 = 90;
+/// Issue #836: Seconds in one trial day (ledger time).
+pub const TRIAL_DAY_SECS: u64 = 86_400;
 
 /// Issue #806: Default cancellation grace period after a successful subscription
 /// charge (24 hours in seconds). Subscribers may cancel within this window and
@@ -91,6 +107,20 @@ pub const MAX_DISPUTE_BATCH: u32 = 20;
 /// Number of `ARBITRATOR`-role votes (either direction) required to
 /// auto-execute a dispute resolution via [`FluxaPayContract::vote_dispute`].
 pub const ARBITRATOR_VOTING_THRESHOLD: u32 = 3;
+
+/// Issue #843: Stake amount that yields one unit of arbitration vote weight
+/// (100 USDC at 7 decimal places). `vote_weight = stake_amount / VOTE_WEIGHT_UNIT`.
+pub const VOTE_WEIGHT_UNIT: i128 = 1_000_000_000;
+/// Issue #843: Minimum stake required to participate in weighted arbitration
+/// voting (must yield at least 1 weight unit).
+pub const MIN_ARBITRATOR_STAKE: i128 = VOTE_WEIGHT_UNIT;
+/// Issue #843: Default weighted quorum in basis points of total registered
+/// stake weight (5100 = 51%). Admin-configurable via `set_weighted_quorum_bps`.
+pub const WEIGHTED_QUORUM_BPS: u32 = 5_100;
+
+/// Issue #846: Default number of ledgers that must elapse between
+/// `propose_upgrade` and `execute_upgrade` (~48h at ~5s/ledger).
+pub const UPGRADE_TIMELOCK_LEDGERS: u32 = 34_560;
 
 /// Maximum number of withdrawal records retained in `TreasuryWithdrawalHistory`.
 pub const TREASURY_WITHDRAWAL_HISTORY_CAP: u32 = 100;

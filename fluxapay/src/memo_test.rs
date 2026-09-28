@@ -37,6 +37,7 @@ fn create_payment_args(
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     }
 }
 

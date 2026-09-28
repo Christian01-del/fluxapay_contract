@@ -1,14 +1,20 @@
 {
   "name": "@fluxapay/backend",
   "version": "0.1.0",
-  "description": "FluxaPay backend API — SEP-10 challenge/token endpoints for merchant authentication",
+  "description": "FluxaPay backend API \u2014 SEP-10 challenge/token endpoints for merchant authentication",
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test:content-type": "ts-node --transpile-only test/content-type.test.ts"
   },
-  "keywords": ["fluxapay", "stellar", "sep-10", "auth"],
+  "keywords": [
+    "fluxapay",
+    "stellar",
+    "sep-10",
+    "auth"
+  ],
   "author": "FluxaPay",
   "license": "MIT",
   "dependencies": {

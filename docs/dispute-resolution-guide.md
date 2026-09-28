@@ -218,6 +218,61 @@ This is the simple `ARBITRATOR` flow. There are also stake-weighted voting paths
 
 ---
 
+## 5b) Stake-weighted arbitration voting (Issue #843)
+
+Equal one-address-one-vote arbitration is easy to game with many low-stake
+accounts. Weighted voting ties each arbitrator's influence to locked stake.
+
+### Mechanics
+
+1. Arbitrators call `lock_stake` with at least **`MIN_ARBITRATOR_STAKE`**
+   (= `VOTE_WEIGHT_UNIT` = **100 USDC** / `1_000_000_000` stroops).
+2. `vote_weight = stake_amount / VOTE_WEIGHT_UNIT` (integer division; 1 weight
+   per 100 USDC).
+3. `cast_vote` stores a binary choice plus that `vote_weight`.
+4. Resolution via `finalize_dispute_vote` requires one side's weighted votes to
+   exceed **`WEIGHTED_QUORUM_BPS`** of **total registered stake weight**
+   (default **5100 bps = 51%**). Raw vote counts are not used.
+5. Admins may retune the quorum with `set_weighted_quorum_bps`.
+
+### Minimum stake to participate
+
+| Constant | Default | Meaning |
+|---|---|---|
+| `VOTE_WEIGHT_UNIT` | 100 USDC | Stake that yields 1 vote weight |
+| `MIN_ARBITRATOR_STAKE` | = `VOTE_WEIGHT_UNIT` | Floor stake to lock / vote |
+| `WEIGHTED_QUORUM_BPS` | 5100 | Named admin-configurable quorum |
+
+Stakes below `MIN_ARBITRATOR_STAKE` are rejected by `lock_stake`. A small-stake
+arbitrator (1 weight) is outvoted by a large-stake arbitrator (e.g. 10 weight)
+when the large stake alone crosses the weighted quorum of total registered weight.
+
+### CLI example
+
+```bash
+# Lock 1000 USDC → 10 weight units
+stellar contract invoke \
+  --id $REFUND_MANAGER_ID \
+  --network testnet \
+  --source $ARBITRATOR_SECRET \
+  -- lock_stake \
+  --arbitrator $ARBITRATOR_ADDRESS \
+  --dispute_id "dispute_1" \
+  --token $USDC_TOKEN \
+  --amount 10000000000
+
+stellar contract invoke \
+  --id $REFUND_MANAGER_ID \
+  --network testnet \
+  --source $ARBITRATOR_SECRET \
+  -- cast_vote \
+  --arbitrator $ARBITRATOR_ADDRESS \
+  --dispute_id "dispute_1" \
+  --choice Favour
+```
+
+---
+
 ## 6) Dispute bond and return/forfeiture rules
 
 The dispute bond is a core anti-abuse mechanism.
@@ -319,6 +374,12 @@ Current behavior:
 - dispute rate is measured against total payment count
 - if the rate exceeds 10% after enough payments are recorded, the merchant is auto-suspended
 - rejected disputes are not counted against the merchant's active dispute threshold once rejected
+- **Issue #833**: Opening a dispute also increments `MerchantRegistry.dispute_count` via
+  `increment_merchant_dispute_count`. `get_merchant_dispute_count` returns that field for
+  KYC scoring. **Decision**: the registry count is a **lifetime total** and does **not**
+  decrement when a dispute is resolved in the merchant's favour. Active/open dispute
+  accounting for suspension continues to use RefundManager's separate
+  `MerchantDisputeCount` key (which does decrement on reject).
 
 This is important for merchants operating high-volume marketplaces: a rising dispute rate may lead to temporary suspension or operational review, even before a human review escalates the case.
 

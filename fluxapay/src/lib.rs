@@ -62,6 +62,21 @@ const MAX_EVIDENCE_LEN: usize = 512;
 const MAX_NOTES_LEN: usize = 512;
 pub(crate) const ZERO_CONTRACT_STRKEY: &str =
     "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+pub mod constants;
+pub mod data_keys;
+pub mod payment_processor;
+pub mod refund_manager;
+pub mod types;
+pub mod gas_estimator;
+
+pub use constants::*;
+pub use data_keys::*;
+pub use payment_processor::*;
+pub use refund_manager::*;
+pub use types::*;
+pub use gas_estimator::{
+    CostEstimate, GasEstimator, GasEstimatorClient, GasEstimatorError, Operation,
+};
 
 mod access_control;
 pub mod account_abstraction;
@@ -72,7 +87,10 @@ pub mod merchant_auth;
 mod payment_state_machine;
 pub mod stream;
 
-pub use stream::{PaymentStream, PaymentStreaming, StreamDataKey, StreamError, StreamStatus};
+pub use stream::{
+    MultiPaymentStream, PayeeAllocation, PaymentStream, PaymentStreaming, StreamDataKey,
+    StreamError, StreamStatus, MAX_MULTI_PAYEES, MULTI_STREAM_SHARE_TOTAL,
+};
 
 pub use access_control::AccessControlDataKey;
 pub use access_control::{AdminAction, AdminProposal};
@@ -135,6 +153,10 @@ pub struct PaymentCharge {
     /// for tracing a payment back to its source link. `None` for payments created
     /// directly via `create_payment`/`swap_and_pay`.
     pub payment_link_id: Option<String>,
+    /// Issue #767: When true, allows funding the payment across multiple transactions.
+    pub allow_partial: Option<bool>,
+    tip_enabled: false,
+    tip_amount: None,
 }
 
 #[contracttype]
@@ -152,6 +174,8 @@ pub struct VerifyPaymentArgs {
 pub struct PaymentSummary {
     pub payment_id: String,
     pub amount: i128,
+    /// Issue #844: Tip itemized separately from base amount.
+    pub tip_amount: i128,
     pub fee: i128,
     pub refund_amount: i128,
     pub status: PaymentStatus,
@@ -457,8 +481,16 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
+    MuxedAccountMismatch = 70,
+    /// Issue #836: Subscription is still in its free trial; no charge yet.
+    TrialActive = 70,
+    /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
+    TrialTooLong = 71,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
+    /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
+    KycLimitExceeded = 71,
 }
 
 #[contracttype]
@@ -490,7 +522,10 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
-}
+    /// Issue #767: Optional flag to allow partial payment accumulation.
+    pub allow_partial: Option<bool>,
+        tip_enabled: false,
+    }
 
 /// Issue #771: Payment request item for `create_payment_batch`.
 #[contracttype]
@@ -633,7 +668,8 @@ pub struct VoteTally {
     pub against_weight: i128,
     /// Number of arbitrators who have voted.
     pub vote_count: u32,
-}
+            total_registered_weight: 0,
+        }
 
 /// Number of `ARBITRATOR`-role votes (either direction) required to
 /// auto-execute a dispute resolution via [`FluxaPayContract::vote_dispute`].
@@ -663,7 +699,7 @@ pub struct ArbitratorVote {
 pub struct ArbitratorVoteTally {
     pub approve_count: u32,
     pub reject_count: u32,
-}
+        }
 
 /// Record of a single admin treasury withdrawal.
 #[contracttype]
@@ -838,6 +874,10 @@ pub struct Subscription {
     /// Affiliate fee in basis points (bps). If set and `affiliate` is Some,
     /// `affiliate_fee_bps / 10000` of each payment will be routed to the affiliate.
     pub affiliate_fee_bps: Option<u32>,
+    /// Issue #836: Ledger timestamp when the free trial ends. `None` if the
+    /// plan has no trial. While `now < trial_ends_at`, `charge_subscription`
+    /// returns `Error::TrialActive` and does not bill.
+    pub trial_ends_at: Option<u64>,
 }
 
 #[contracttype]
@@ -877,6 +917,9 @@ pub struct SubscriptionPlan {
     /// If non-empty, the plan amount will be distributed to the configured
     /// `SettlementSplit` recipients on each subscription charge.
     pub payout_splits: Vec<SettlementSplit>,
+    /// Issue #836: Optional free-trial length in days (max 90). When set,
+    /// subscribers are not charged until `trial_ends_at`.
+    pub trial_days: Option<u32>,
 }
 
 #[contracttype]
@@ -1695,6 +1738,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -1868,6 +1913,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -2789,8 +2836,8 @@ impl RefundManager {
 pub mod utils;
 pub use utils::{format_id, is_valid_cid, validate_id, validate_ipfs_multihash};
 
-pub mod gas_estimator;
-pub use gas_estimator::{CostEstimate, GasEstimator, GasEstimatorClient, Operation};
+// gas_estimator is declared at the top of lib.rs (Issue #835).
+pub use gas_estimator::{CostEstimate, GasEstimator, GasEstimatorClient, GasEstimatorError, Operation};
 
 pub mod merchant_registry;
 pub use merchant_registry::{
@@ -3157,6 +3204,17 @@ pub use merchant_registry::{
             .persistent()
             .set(&dispute_count_key, &new_dispute_count);
         Self::bump_ttl(env, &dispute_count_key, LONG_LIVE_TTL);
+
+        // Issue #833: Cross-call MerchantRegistry so KYC scoring sees the dispute.
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+        }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
         let payment_count: u64 = env
@@ -4172,7 +4230,8 @@ pub use merchant_registry::{
                     favour_weight: 0,
                     against_weight: 0,
                     vote_count: 0,
-                });
+                            total_registered_weight: 0,
+        });
 
         match choice {
             VoteChoice::Favour => tally.favour_weight = tally.favour_weight.saturating_add(stake),
@@ -4234,7 +4293,8 @@ pub use merchant_registry::{
                 favour_weight: 0,
                 against_weight: 0,
                 vote_count: 0,
-            });
+                        total_registered_weight: 0,
+        });
 
         // Determine majority
         let favour_wins = tally.favour_weight >= tally.against_weight;
@@ -4378,7 +4438,7 @@ pub use merchant_registry::{
                 .unwrap_or(ArbitratorVoteTally {
                     approve_count: 0,
                     reject_count: 0,
-                });
+        });
 
         match choice {
             ArbitratorVoteChoice::Approve => {
@@ -4461,7 +4521,8 @@ pub use merchant_registry::{
                 favour_weight: 0,
                 against_weight: 0,
                 vote_count: 0,
-            })
+                        total_registered_weight: 0,
+        })
     }
 
     pub fn get_dispute(env: Env, dispute_id: String) -> Result<Dispute, Error> {
@@ -4660,6 +4721,7 @@ pub use merchant_registry::{
         amount: i128,
         currency: Symbol,
         billing_interval: BillingInterval,
+        trial_days: Option<u32>,
     ) -> Result<(), Error> {
         merchant.require_auth();
 
@@ -4669,6 +4731,12 @@ pub use merchant_registry::{
 
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        if let Some(days) = trial_days {
+            if days > MAX_TRIAL_DAYS {
+                return Err(Error::TrialTooLong);
+            }
         }
 
         let interval_secs = billing_interval.to_secs();
@@ -4684,6 +4752,7 @@ pub use merchant_registry::{
             billing_interval,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days,
         };
 
         env.storage()
@@ -4728,6 +4797,7 @@ pub use merchant_registry::{
             billing_interval: BillingInterval::Daily,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days: None,
         };
 
         env.storage()
@@ -4801,6 +4871,14 @@ pub use merchant_registry::{
         let subscription_id = format_id(&env, "sub_", counter);
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -4809,7 +4887,7 @@ pub use merchant_registry::{
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -4820,6 +4898,7 @@ pub use merchant_registry::{
             resume_at: None,
             affiliate: affiliate.clone(),
             affiliate_fee_bps,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -4845,8 +4924,19 @@ pub use merchant_registry::{
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id.clone(), payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        // Issue #836: emit TRIAL_STARTED when the plan includes a free trial.
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id.clone(), payer, plan_id, ends),
+            );
+        }
 
         Ok(subscription_id)
     }
@@ -4879,6 +4969,14 @@ pub use merchant_registry::{
         }
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -4887,7 +4985,7 @@ pub use merchant_registry::{
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -4898,6 +4996,7 @@ pub use merchant_registry::{
             resume_at: None,
             affiliate: None,
             affiliate_fee_bps: None,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -4922,8 +5021,18 @@ pub use merchant_registry::{
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id, payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id, payer, plan_id, ends),
+            );
+        }
 
         Ok(())
     }
@@ -5130,6 +5239,17 @@ pub use merchant_registry::{
             return Ok(subscription.status);
         }
 
+        // Issue #836: free trial — no charge until trial_ends_at.
+        if let Some(trial_ends) = subscription.trial_ends_at {
+            if now < trial_ends {
+                env.storage().persistent().set(
+                    &DataKey::Subscription(subscription_id.clone()),
+                    &subscription,
+                );
+                return Err(Error::TrialActive);
+            }
+        }
+
         // Check whether we are in a retry window or a normal due-date window.
         let is_retry = subscription.next_retry_at.is_some();
         let due = if is_retry {
@@ -5145,6 +5265,22 @@ pub use merchant_registry::{
                 &subscription,
             );
             return Ok(subscription.status);
+        }
+
+        // Issue #836: emit TRIAL_ENDED once when the first post-trial charge begins.
+        let ending_trial = subscription.trial_ends_at.is_some() && subscription.total_payments == 0;
+        if ending_trial {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_ENDED"),
+                ),
+                (
+                    subscription_id.clone(),
+                    subscription.payer_address.clone(),
+                    subscription.plan_id.clone(),
+                ),
+            );
         }
 
         // ── Attempt token transfer ────────────────────────────────────────────
@@ -5508,6 +5644,8 @@ pub use merchant_registry::{
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         env.storage()
@@ -5867,6 +6005,8 @@ pub use merchant_registry::{
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
 
             env.storage()
@@ -7404,11 +7544,8 @@ impl PaymentProcessor {
                 crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
             match registry_client.try_get_merchant(&args.merchant_id) {
                 Ok(Ok(merchant)) => {
-                    // Require merchant to be verified (not Unverified), active, and not suspended
-                    if merchant.kyc_tier == crate::merchant_registry::KycTier::Unverified
-                        || !merchant.active
-                        || merchant.suspension_reason.is_some()
-                    {
+                    // Require merchant to be active and not suspended
+                    if !merchant.active || merchant.suspension_reason.is_some() {
                         return Err(Error::Unauthorized);
                     }
 
@@ -7434,6 +7571,25 @@ impl PaymentProcessor {
         }
 
         Self::enforce_amount_limits(&env, &args.merchant_id, args.amount)?;
+
+        // Issue #777: Enforce KYC tier limits (single-payment and monthly volume caps) via MerchantRegistry
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_address);
+            match registry_client.try_check_kyc_limit(&args.merchant_id, &args.amount) {
+                Ok(Ok(())) => {}
+                Ok(Err(crate::merchant_registry::MerchantError::KycLimitExceeded)) => {
+                    return Err(Error::KycLimitExceeded);
+                }
+                _ => {
+                    return Err(Error::KycLimitExceeded);
+                }
+            }
+        }
 
         // Issue #393: Enforce KYC tier per-payment limit when merchant registry is configured
         if let Some(registry_address) = env
@@ -7542,6 +7698,9 @@ impl PaymentProcessor {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            allow_partial: args.allow_partial,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         env.storage()
@@ -7833,6 +7992,9 @@ impl PaymentProcessor {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: args.allow_partial,
+                tip_enabled: false,
+                tip_amount: None,
             };
 
             env.storage()
@@ -8198,14 +8360,20 @@ impl PaymentProcessor {
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::require_not_blacklisted(&env, &payment.merchant_id)?;
 
+        let is_partial_mode = payment.allow_partial.unwrap_or(false);
+
         // Issue #75: Enforce idempotent verify_payment - reject double verification
         // If payment is already Confirmed, return current status without error
         if payment.status == PaymentStatus::Confirmed {
             return Ok(payment.status);
         }
 
-        // Reject if payment is in any other terminal state
-        if payment.status != PaymentStatus::Pending {
+        // Reject if payment is in any terminal state, or if PartiallyPaid but partial mode is disabled
+        if payment.status == PaymentStatus::PartiallyPaid {
+            if !is_partial_mode {
+                return Err(Error::PaymentAlreadyProcessed);
+            }
+        } else if payment.status != PaymentStatus::Pending {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
@@ -8213,11 +8381,19 @@ impl PaymentProcessor {
             return Err(Error::PaymentExpired);
         }
 
+        let total_received = if is_partial_mode {
+            payment.amount_received.unwrap_or(0).saturating_add(amount_received)
+        } else {
+            amount_received
+        };
+
         // Record the actual amount received for reconciliation
-        payment.amount_received = Some(amount_received);
+        payment.amount_received = Some(total_received);
         payment.payer_address = Some(payer_address.clone());
         payment.transaction_hash = Some(transaction_hash);
-        payment.confirmed_at = Some(env.ledger().timestamp());
+        if total_received >= payment.amount {
+            payment.confirmed_at = Some(env.ledger().timestamp());
+        }
         // Issue #484: Store muxed ID if M-address was used
         payment.payer_muxed_id = payer_muxed_id;
 
@@ -8278,7 +8454,7 @@ impl PaymentProcessor {
         let max_tolerance = payment.amount / 100; // 1% of payment amount
         let tolerance = tolerance.min(max_tolerance);
 
-        let diff = amount_received - payment.amount;
+        let diff = total_received - payment.amount;
 
         let mut new_status = if (0..=tolerance).contains(&diff) {
             // Exact match or tiny overpay within tolerance → Confirmed
@@ -8333,10 +8509,23 @@ impl PaymentProcessor {
             _ => Symbol::new(&env, "FAILED"),
         };
         let overpaid_refund_amount = if new_status == PaymentStatus::Overpaid {
-            Some(amount_received.saturating_sub(payment.amount))
+            Some(total_received.saturating_sub(payment.amount))
         } else {
             None
         };
+
+        // Issue #767: If in partial mode and still partially paid, emit PAYMENT/PARTIAL_RECEIVED event
+        if is_partial_mode && new_status == PaymentStatus::PartiallyPaid {
+            let remaining = payment.amount.saturating_sub(total_received);
+            crate::events::emit_payment_partial_received(
+                &env,
+                &payment_id,
+                &payer_address,
+                amount_received,
+                total_received,
+                remaining,
+            );
+        }
 
         // Issue #471: Emit status-specific events for PartiallyPaid and Overpaid.
         if new_status == PaymentStatus::PartiallyPaid {
@@ -8361,7 +8550,7 @@ impl PaymentProcessor {
         }
 
         // Issue #162: Merchant-configurable partial payment policy.
-        if new_status == PaymentStatus::PartiallyPaid {
+        if new_status == PaymentStatus::PartiallyPaid && !is_partial_mode {
             let partial_allowed = if let Some(registry_address) = env
                 .storage()
                 .persistent()
@@ -8530,6 +8719,8 @@ impl PaymentProcessor {
         Ok(new_status)
     }
 
+    /// Issue #767: Confirm payment, supporting partial payment accumulation when `allow_partial = true`.
+    #[allow(deprecated)]
     /// Issue #763: Alias for verify_payment matching on-chain payment confirmation convention.
     /// Rejects confirmation if current ledger timestamp exceeds payment.expires_at, returning PaymentExpired.
     pub fn confirm_payment(
@@ -8735,6 +8926,9 @@ impl PaymentProcessor {
             retry_of_payment_id: Some(original_payment_id.clone()),
             payer_muxed_id: None,
             payment_link_id: original.payment_link_id.clone(),
+            allow_partial: original.allow_partial,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         // Store new payment
@@ -8957,11 +9151,16 @@ impl PaymentProcessor {
         result
     }
 
-    /// Issue #488: Permissionless public entry point for TTL maintenance.
-    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+    /// Issue #768: Permissionless function to allow anyone to extend a payment's TTL before it lapses.
+    pub fn bump_payment_ttl(env: Env, payment_id: String) -> Result<(), Error> {
         let payment = Self::get_payment_internal(&env, &payment_id)?;
         Self::bump_payment_ttl(&env, &payment_id, &payment.status);
         Ok(())
+    }
+
+    /// Issue #488: Permissionless public entry point for TTL maintenance.
+    pub fn bump_payment_ttl_public(env: Env, payment_id: String) -> Result<(), Error> {
+        Self::bump_payment_ttl(env, payment_id)
     }
 
     /// Issue #488: Bulk bump payment TTLs for efficient maintenance sweeps (max 50).
@@ -9127,9 +9326,11 @@ impl PaymentProcessor {
                         0
                     };
 
+                    let tip = payment.tip_amount.unwrap_or(0);
                     let summary = PaymentSummary {
                         payment_id: payment.payment_id.clone(),
                         amount: payment.amount,
+                        tip_amount: tip,
                         fee,
                         refund_amount,
                         status: payment.status.clone(),
@@ -9137,7 +9338,7 @@ impl PaymentProcessor {
                     };
 
                     payments_in_period.push_back(summary.clone());
-                    total_gross += payment.amount;
+                    total_gross += payment.amount.saturating_add(tip);
                     total_fees += fee;
                     total_refunds += refund_amount;
                 }
@@ -9266,7 +9467,7 @@ impl PaymentProcessor {
     pub fn expire_payment(env: Env, payment_id: String) -> Result<(), Error> {
         let mut payment = Self::get_payment_internal(&env, &payment_id)?;
 
-        if payment.status != PaymentStatus::Pending {
+        if payment.status != PaymentStatus::Pending && payment.status != PaymentStatus::PartiallyPaid {
             return Err(Error::PaymentAlreadyProcessed);
         }
 
@@ -9295,6 +9496,40 @@ impl PaymentProcessor {
             ),
             (payment_id.clone(), payment.amount),
         );
+
+        // Issue #767: If the payment expires before being fully funded, refund partial amount to payer
+        let partial_received = payment.amount_received.unwrap_or(0);
+        if partial_received > 0 {
+            if let Some(ref payer_addr) = payment.payer_address {
+                let token_addr = payment
+                    .token_address
+                    .clone()
+                    .unwrap_or_else(|| Self::get_usdc_token(&env));
+                let refund_id = Self::generate_refund_id(&env, &payment_id);
+                let auto_refund_request = AutoRefundRequest {
+                    refund_id: refund_id.clone(),
+                    payment_id: payment_id.clone(),
+                    merchant_id: payment.merchant_id.clone(),
+                    payer_address: payer_addr.clone(),
+                    amount: partial_received,
+                    token_address: token_addr,
+                    reason: String::from_str(&env, "Partial payment expired - auto refunded"),
+                    requested_at: env.ledger().timestamp(),
+                    dispute_id: None,
+                    payer_muxed_id: payment.payer_muxed_id,
+                };
+                Self::push_auto_refund_request(&env, auto_refund_request);
+
+                crate::events::emit_refund_requested(
+                    &env,
+                    &refund_id,
+                    &payment_id,
+                    &payment.merchant_id,
+                    payer_addr,
+                    partial_received,
+                );
+            }
+        }
 
         Ok(())
     }
@@ -10351,7 +10586,10 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
+            allow_partial: None,
         };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 
@@ -10454,7 +10692,8 @@ impl PaymentProcessor {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         let mut payment = Self::create_payment(env.clone(), create_args)?;
 
@@ -10939,13 +11178,19 @@ impl PaymentProcessor {
             | PaymentStatus::Expired
             | PaymentStatus::Failed
             | PaymentStatus::PartiallyPaid
-            | PaymentStatus::Overpaid => LONG_LIVE_TTL,
+            | PaymentStatus::Overpaid => MIN_PERSISTENT_TTL,
         }
     }
 
     fn bump_payment_ttl(env: &Env, payment_id: &String, status: &PaymentStatus) {
         let key = DataKey::Payment(payment_id_to_key(env, payment_id));
-        Self::bump_ttl(env, &key, Self::payment_ttl(status));
+        let ttl = Self::payment_ttl(status);
+        let threshold = if ttl >= MIN_PERSISTENT_TTL {
+            MIN_BUMP_TTL
+        } else {
+            core::cmp::max(1, ttl / TTL_BUMP_THRESHOLD_DIVISOR)
+        };
+        env.storage().persistent().extend_ttl(&key, threshold, ttl);
     }
 
     fn bump_ttl(env: &Env, key: &DataKey, ttl: u32) {
@@ -11220,6 +11465,47 @@ impl PaymentProcessor {
             stream_id,
             None,
         )
+    }
+
+    /// Issue #831: Create a multi-payee stream (shares must sum to 10_000 bps, max 10 payees).
+    pub fn create_multi_stream(
+        env: Env,
+        sender: Address,
+        token: Address,
+        deposit: i128,
+        rate_per_second: i128,
+        payees: Vec<PayeeAllocation>,
+    ) -> Result<String, StreamError> {
+        if Self::is_blacklisted_address(&env, &sender) {
+            return Err(StreamError::Unauthorized);
+        }
+        for i in 0..payees.len() {
+            let payee = payees.get(i).unwrap();
+            if Self::is_blacklisted_address(&env, &payee.address) {
+                return Err(StreamError::Unauthorized);
+            }
+        }
+        PaymentStreaming::create_multi_stream(
+            env,
+            sender,
+            token,
+            deposit,
+            rate_per_second,
+            payees,
+        )
+    }
+
+    /// Issue #831: Withdraw and distribute proportionally to all multi-stream payees.
+    pub fn withdraw_multi_stream(env: Env, stream_id: String) -> Result<(), StreamError> {
+        PaymentStreaming::withdraw_multi_stream(env, stream_id)
+    }
+
+    /// Issue #831: Read a multi-payee stream by ID.
+    pub fn get_multi_stream(
+        env: Env,
+        stream_id: String,
+    ) -> Result<MultiPaymentStream, StreamError> {
+        PaymentStreaming::get_multi_stream(env, stream_id)
     }
 
     pub fn top_up_stream(

@@ -4,6 +4,17 @@
 use crate::merchant_registry::KycTier;
 use soroban_sdk::{contracterror, contracttype, vec, Address, Env, Symbol, Vec};
 
+/// Canonical role registry — single source of truth for `grant_role` /
+/// `revoke_role` validation (Issue #815). Typo'd or invented role symbols
+/// (e.g. `SETLMENT_OPERATOR`) are rejected with `UnknownRole`.
+pub const KNOWN_ROLES: &[&str] = &[
+    "ADMIN",
+    "ORACLE",
+    "MERCHANT",
+    "SETTLEMENT_OPERATOR",
+    "ARBITRATOR",
+];
+
 // Role-based access control implementation
 pub fn role_admin(env: &Env) -> Symbol {
     Symbol::new(env, "ADMIN")
@@ -25,6 +36,16 @@ pub fn role_arbitrator(env: &Env) -> Symbol {
     Symbol::new(env, "ARBITRATOR")
 }
 
+/// Returns `true` when `role` is listed in [`KNOWN_ROLES`].
+pub fn is_known_role(env: &Env, role: &Symbol) -> bool {
+    for name in KNOWN_ROLES {
+        if *role == Symbol::new(env, name) {
+            return true;
+        }
+    }
+    false
+}
+
 #[contracterror]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AccessControlError {
@@ -42,6 +63,8 @@ pub enum AccessControlError {
     ProposalThresholdNotMet = 12,
     PendingAdminTransfer = 13,
     InvalidRecovery = 14,
+    /// Role symbol is not in the [`KNOWN_ROLES`] registry.
+    UnknownRole = 15,
 }
 
 #[contracttype]
@@ -329,6 +352,10 @@ impl AccessControl {
             return Err(AccessControlError::Unauthorized);
         }
 
+        if !is_known_role(env, &role) {
+            return Err(AccessControlError::UnknownRole);
+        }
+
         if Self::has_role(env, &role, &account) {
             return Err(AccessControlError::RoleAlreadyGranted);
         }
@@ -359,6 +386,10 @@ impl AccessControl {
         admin.require_auth();
         if !Self::has_role(env, &role_admin(env), &admin) {
             return Err(AccessControlError::Unauthorized);
+        }
+
+        if !is_known_role(env, &role) {
+            return Err(AccessControlError::UnknownRole);
         }
 
         if !Self::has_role(env, &role, &account) {

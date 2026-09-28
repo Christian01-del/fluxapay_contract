@@ -119,6 +119,7 @@ fn create_payment_args(
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     }
 }
 
@@ -2953,6 +2954,7 @@ fn test_create_payment_idempotency_retry_returns_same_payment() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let first = client.create_payment(&args);
@@ -2995,6 +2997,7 @@ fn test_create_payment_idempotency_different_payment_id_fails() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     // First call succeeds
@@ -3115,6 +3118,7 @@ fn test_create_payment_without_idempotency_token_fails_on_retry() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     client.create_payment(&args);
@@ -3383,6 +3387,7 @@ fn setup_refund_manager_with_plan(env: &Env) -> (RefundManagerClient<'_>, Addres
         &1000_000000i128,
         &Symbol::new(env, "USDC"),
         &crate::BillingInterval::Monthly,
+        &None,
     );
 
     (client, admin, plan_id)
@@ -3409,6 +3414,7 @@ fn test_process_refund_reentrancy_guard_normal_flow() {
         &1000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Monthly,
+        &None,
     );
 
     let payer = Address::generate(&env);
@@ -5726,6 +5732,7 @@ fn test_merchant_payment_count_accurate_after_creates() {
         metadata_hash: None,
         metadata: None,
         fee_waiver_code: None,
+            tip_enabled: false,
     });
 }
 
@@ -5762,6 +5769,7 @@ fn test_create_payment_future_expiry_accepted() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
@@ -5800,6 +5808,7 @@ fn test_create_payment_current_timestamp_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5839,6 +5848,7 @@ fn test_create_payment_past_expiry_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5875,6 +5885,7 @@ fn test_create_payment_duration_min_bound_enforced() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5911,6 +5922,7 @@ fn test_create_payment_duration_max_bound_enforced() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -5949,6 +5961,7 @@ fn test_create_payment_valid_duration_within_bounds() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
@@ -6026,6 +6039,7 @@ fn test_create_payment_zero_amount_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -6172,6 +6186,7 @@ fn test_create_payment_negative_amount_rejected() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let result = client.try_create_payment(&args);
@@ -6207,6 +6222,7 @@ fn test_create_payment_minimum_positive_amount_accepted() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = client.create_payment(&args);
@@ -6280,6 +6296,7 @@ fn test_subscription_max_retries_cancelled() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     // Create subscription
@@ -6308,6 +6325,7 @@ fn test_subscription_retry_counter_reset_on_success() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     let subscription_id = client.subscribe(&payer, &plan_id, &None, &None, &MaybeFeeConfig::None);
@@ -6335,6 +6353,7 @@ fn test_admin_reactivate_max_retries_cancelled_subscription() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     let subscription_id = client.subscribe(&payer, &plan_id, &None, &None, &MaybeFeeConfig::None);

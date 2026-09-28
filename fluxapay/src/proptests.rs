@@ -198,7 +198,8 @@ proptest! {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         client.create_payment(&args);
 
@@ -254,7 +255,8 @@ proptest! {
             fee_waiver_code: None,
             retry_of_payment_id: None,
             payer_muxed_id: None,
-        };
+                tip_enabled: false,
+    };
 
         client.create_payment(&args);
 
@@ -591,7 +593,8 @@ proptest! {
                 fee_waiver_code: None,
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
-            });
+                    tip_enabled: false,
+    });
             registry_client.set_kyc_tier_with_signature(
                 &admin,
                 &merchant,
@@ -653,6 +656,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(
@@ -706,6 +710,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(
@@ -752,6 +757,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(

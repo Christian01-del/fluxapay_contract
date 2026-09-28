@@ -8,6 +8,49 @@ Official TypeScript SDK for interacting with FluxaPay's Soroban smart contracts 
 npm install @fluxapay/sdk
 ```
 
+### Browser vs Node.js
+
+| Environment | Import | Notes |
+|-------------|--------|-------|
+| Browser / bundlers | `import { FluxapayClient } from "@fluxapay/sdk"` | Uses the default build; relies on the runtime `fetch`. |
+| Node.js 18+ (scripts, daemons, backends) | `import { FluxapayClient } from "@fluxapay/sdk/node"` | Applies Node-friendly Stellar SDK defaults (`setAllowHttp`, native `fetch`). No caller-side polyfill needed. |
+
+```typescript
+// Node.js
+import { FluxapayClient } from "@fluxapay/sdk/node";
+
+const client = new FluxapayClient({
+  network: "testnet",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  contractId: "C...",
+});
+```
+
+The browser import path is unchanged and unaffected by the `/node` entry.
+## Payment Receipts (Issue #816)
+
+After a payment is confirmed, generate a signed, shareable receipt:
+
+```ts
+const client = new FluxapayClient({
+  network: "testnet",
+  contractId: "C...",
+  platformSigningKey: process.env.FLUXAPAY_PLATFORM_SECRET!, // S...
+  platformPublicKey: process.env.FLUXAPAY_PLATFORM_PUBLIC,   // G... (optional)
+  receiptBaseUrl: "https://receipts.fluxapay.io",            // optional
+});
+
+const receipt = await client.generateReceipt(paymentId);
+// receipt.receipt_url → https://receipts.fluxapay.io/r/{payment_id}
+// receipt.proof → base64 Ed25519 signature over canonical fields
+
+import { verifyReceipt } from "@fluxapay/sdk";
+verifyReceipt(receipt, platformPublicKey); // pure, no network
+```
+
+**Receipt URL format:** `{receiptBaseUrl}/r/{payment_id}`  
+**Signed fields:** `payment_id`, `amount`, `merchant_name`, `confirmed_at`, `tx_hash`
+
 ## Release Notes
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
@@ -54,6 +97,34 @@ async function main() {
   // Get payment status
   const status = await client.getPayment("pay_123");
   console.log("Payment status:", status);
+}
+```
+
+## Error Handling
+
+The SDK translates all Soroban contract error codes into typed JavaScript `FluxapayError` subclasses (such as `KycLimitExceededError`, `PaymentExpiredError`, `PaymentNotFoundError`, etc.), allowing developers to catch specific error conditions using standard `instanceof` checks.
+
+For the full list of error classes, corresponding contract error codes, and handling guidance, see the **[Error Reference Guide](./docs/error-reference.md)**.
+
+```typescript
+import {
+  FluxapayError,
+  KycLimitExceededError,
+  PaymentExpiredError,
+} from "@fluxapay/sdk";
+
+try {
+  await client.createPayment({ ... });
+} catch (error) {
+  if (error instanceof KycLimitExceededError) {
+    console.error("KYC limit exceeded. Upgrade merchant verification.");
+  } else if (error instanceof PaymentExpiredError) {
+    console.error("Payment has expired.");
+  } else if (error instanceof FluxapayError) {
+    console.error(`Contract error #${error.code} (${error.contractErrorName}):`, error.localizedMessage);
+  } else {
+    throw error;
+  }
 }
 ```
 
