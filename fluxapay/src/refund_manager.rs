@@ -655,6 +655,59 @@ impl RefundManager {
         }
     }
 
+    /// Helper for tests to register a confirmed payment with an explicit payer address.
+    pub fn register_payment_with_payer(
+        env: Env,
+        payment_id: String,
+        merchant_id: Address,
+        payer: Address,
+        amount: i128,
+        currency: Symbol,
+    ) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Payment(payment_id_to_key(&env, &payment_id)))
+        {
+            let payment = PaymentCharge {
+                payment_id: payment_id.clone(),
+                merchant_id: merchant_id.clone(),
+                amount,
+                currency,
+                deposit_address: env.current_contract_address(),
+                status: PaymentStatus::Confirmed,
+                payer_address: Some(payer),
+                transaction_hash: None,
+                created_at: env.ledger().timestamp(),
+                confirmed_at: Some(env.ledger().timestamp()),
+                expires_at: 0,
+                amount_received: None,
+                memo: None,
+                memo_type: None,
+                token_address: None,
+                metadata_hash: None,
+                original_token: None,
+                swap_path: None,
+                fx_rate: None,
+                fx_rate_at: None,
+                metadata: None,
+                fee_waiver_code: None,
+                retry_of_payment_id: None,
+                payer_muxed_id: None,
+                payment_link_id: None,
+            };
+            env.storage()
+                .persistent()
+                .set(&DataKey::Payment(payment_id_to_key(&env, &payment_id)), &payment);
+            Self::bump_payment_ttl(&env, &payment_id, &payment.status);
+
+            let count_key = DataKey::MerchantPaymentCount(merchant_id.clone());
+            let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
+            env.storage().persistent().set(&count_key, &(count + 1));
+            Self::bump_ttl(&env, &count_key, LONG_LIVE_TTL);
+        }
+    }
+
     pub fn queue_auto_refund(
         env: Env,
         caller: Address,
@@ -815,6 +868,32 @@ impl RefundManager {
         };
         Self::require_not_blacklisted(env, &payment.merchant_id)?;
         Self::require_not_blacklisted(env, &requester)?;
+
+        // Issue #770: Verify requester is the original payment payer or merchant
+        let is_payer = payment.payer_address.as_ref().map_or(false, |p| *p == requester);
+        let mut is_merchant = requester == payment.merchant_id;
+
+        if !is_payer && !is_merchant {
+            if let Some(registry_address) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+            {
+                let registry_client =
+                    crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+                if let Ok(Ok(merchant)) = registry_client.try_get_merchant(&payment.merchant_id) {
+                    if requester == merchant.merchant_id
+                        || merchant.payout_address.as_ref() == Some(&requester)
+                    {
+                        is_merchant = true;
+                    }
+                }
+            }
+        }
+
+        if !is_payer && !is_merchant {
+            return Err(Error::Unauthorized);
+        }
 
         // Issue #76: Reject refunds unless payment.status == Confirmed or Overpaid
         if payment.status != PaymentStatus::Confirmed && payment.status != PaymentStatus::Overpaid {

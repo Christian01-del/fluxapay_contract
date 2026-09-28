@@ -23,7 +23,8 @@ When a payment (or refund/dispute) transitions state, FluxaPay’s off-chain ind
 | `payment.created` | Charge created | `PAYMENT/CREATED` |
 | `payment.pending` | Awaiting on-chain confirmation | payment still `Pending` |
 | `payment.confirmed` | Deposit verified | `PAYMENT/CONFIRMED` / verify |
-| `payment.failed` | Expired or failed | `PAYMENT/EXPIRED` / failed status |
+| `payment.expired` | Payment TTL elapsed before funding | `PAYMENT/EXPIRED` |
+| `payment.failed` | Failed or invalid | failed status |
 | `payment.settled` | Merchant settled | `PAYMENT/SETTLED` |
 
 ### Refund events (`REFUND/*`)
@@ -84,6 +85,25 @@ All webhooks share a common envelope:
 | `data.currency` | string | e.g. `USDC` |
 | `data.status` | string | Current status snapshot |
 | `data.metadata` | object\|null | Merchant metadata from create |
+
+### Payment expired payload (`payment.expired`)
+
+```json
+{
+  "id": "evt_01HEXP1234567890",
+  "type": "payment.expired",
+  "created_at": 1710003600,
+  "api_version": "2024-01-01",
+  "data": {
+    "payment_id": "pay_abc123",
+    "merchant_id": "GA7NQQNLFQC7OQF6...MERCHANT",
+    "amount": "10000000",
+    "currency": "USDC",
+    "status": "expired",
+    "expires_at": 1710003600
+  }
+}
+```
 
 ### Refund payload extras
 

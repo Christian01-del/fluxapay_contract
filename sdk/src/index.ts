@@ -173,6 +173,34 @@ export interface CreatePaymentParams {
   feeWaiverCode?: string;
 }
 
+/**
+ * Issue #771: A single payment request item within a batch creation transaction.
+ */
+export interface PaymentRequest {
+  paymentId: string;
+  amount: bigint;
+  currency: string;
+  depositAddress: string;
+  expiresAt?: bigint;
+  durationSecs?: bigint;
+  memo?: string;
+  memoType?: string;
+  tokenAddress?: string;
+  clientToken?: string;
+  metadata?: Record<string, string>;
+  feeWaiverCode?: string;
+  payer?: string;
+  payerMuxedId?: bigint;
+}
+
+/**
+ * Issue #771: Parameters for creating a batch of up to 10 payments.
+ */
+export interface CreatePaymentBatchParams {
+  merchantId: string;
+  payments: PaymentRequest[];
+}
+
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
 export type StreamStatus = "Active" | "Cancelled" | "Exhausted" | "Paused";
 
@@ -888,6 +916,49 @@ export class FluxapayClient {
     return withMappedContractError(() =>
       this.contract.create_payment(toCreatePaymentArgs(params)),
     );
+  }
+
+  /**
+   * Issue #771: Create up to 10 payment charges atomically in a single transaction.
+   * Wraps the `create_payment_batch` contract entry point.
+   */
+  async createPaymentBatch(params: CreatePaymentBatchParams): Promise<string[]> {
+    if (params.payments.length > 10) {
+      throw new FluxapayError(39, "BatchTooLarge", "createPaymentBatch accepts a maximum of 10 items per batch");
+    }
+    return withMappedContractError(async () => {
+      const result = await (this.contract as any).create_payment_batch({
+        merchant_id: params.merchantId,
+        payments: params.payments.map((p) => ({
+          payment_id: p.paymentId,
+          amount: p.amount,
+          currency: p.currency,
+          deposit_address: p.depositAddress,
+          expires_at: p.expiresAt,
+          duration_secs: p.durationSecs,
+          memo: p.memo,
+          memo_type: p.memoType,
+          token_address: p.tokenAddress,
+          client_token: p.clientToken,
+          metadata_hash: undefined,
+          metadata: p.metadata,
+          fee_waiver_code: p.feeWaiverCode,
+          payer: p.payer,
+          payer_muxed_id: p.payerMuxedId,
+        })),
+      });
+      return (result as any)?.result ?? result;
+    });
+  }
+
+  /**
+   * Issue #763: Permissionlessly expire a pending payment whose TTL has elapsed.
+   * Returns PaymentExpired error if the payment has not yet expired.
+   */
+  async expirePayment(paymentId: string): Promise<void> {
+    return withMappedContractError(async () => {
+      await (this.contract as any).expire_payment({ payment_id: paymentId });
+    });
   }
 
   /**
