@@ -120,27 +120,85 @@ Dedup key for disputes: `dispute_id`.
 
 ---
 
-## HMAC-SHA256 signature verification
+## Webhook Signature Verification (HMAC-SHA256 & Ed25519)
+
+FluxaPay supports two signing algorithms for webhooks:
+- **HMAC-SHA256** (`hmac_sha256`, default): Uses a merchant-specific shared secret.
+- **Ed25519** (`ed25519`): Platform signs raw payloads with a dedicated Ed25519 keypair. Fast to verify, compact, and natively aligns with Stellar keypairs.
+
+The `X-FluxaPay-Signature` header is prefixed with the signing algorithm:
+- `sha256=<hex_signature>`
+- `ed25519=<hex_signature>`
 
 Every request includes:
 
 | Header | Description |
 |--------|-------------|
-| `X-FluxaPay-Signature` | Hex-encoded HMAC-SHA256 of `{timestamp}.{raw_body}` |
-| `X-FluxaPay-Timestamp` | Unix seconds when the webhook was signed |
+| `X-FluxaPay-Signature` | Algorithm-prefixed signature (`sha256=...` or `ed25519=...`) |
+| `X-FluxaPay-Timestamp` | Unix seconds when the webhook was delivered |
 | `X-FluxaPay-Event` | Same as JSON `type` (convenience) |
-
-### Algorithm
-
-1. Read the **raw request body** (do not re-serialize JSON).
-2. Build the signed payload: `` `${timestamp}.${rawBody}` ``
-3. Compute `HMAC-SHA256(webhook_secret, signed_payload)` → hex digest.
-4. Compare to `X-FluxaPay-Signature` using a **constant-time** compare.
-5. Reject if `|now - timestamp| > 300` seconds (replay window).
-
-Your webhook secret is issued in the merchant dashboard (or sandbox env). Never log the secret.
+| `X-FluxaPay-Delivery` | Unique delivery attempt ID |
 
 ---
+
+### Algorithm 1: HMAC-SHA256
+
+1. Read the **raw request body** (do not re-serialize JSON).
+2. Strip prefix `sha256=` from `X-FluxaPay-Signature`.
+3. Compute `HMAC-SHA256(webhook_secret, signed_payload)` where `signed_payload = ${timestamp}.${rawBody}`.
+4. Compare using constant-time comparison (`crypto.timingSafeEqual`).
+5. Reject if `|now - timestamp| > 300` seconds (replay window).
+
+---
+
+### Algorithm 2: Ed25519
+
+1. Retrieve the platform's active Ed25519 public key from `GET /webhooks/public-key`.
+2. Read the **raw request body**.
+3. Strip prefix `ed25519=` from `X-FluxaPay-Signature`.
+4. Verify the 64-byte Ed25519 signature over the raw payload buffer using the platform public key.
+5. Check `X-FluxaPay-Timestamp` to ensure the delivery is within the 300-second window.
+
+#### Active Public Key Endpoint
+
+```http
+GET /webhooks/public-key
+```
+
+Response:
+```json
+{
+  "algorithm": "ed25519",
+  "public_key": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+}
+```
+
+---
+
+### Key Rotation Procedure
+
+To rotate the platform's Ed25519 signing key without downtime:
+1. **Pre-publish new key**: Deploy the new public key alongside the existing active key in key management.
+2. **Grace period**: Backends can cache the public key with a TTL (e.g., 1 hour). When a signature verification fails, backends should re-fetch `GET /webhooks/public-key`.
+3. **Switch active key**: Set `WEBHOOK_ED25519_PRIVATE_KEY` and `WEBHOOK_ED25519_PUBLIC_KEY` in the indexer environment.
+4. **Verification fallback**: Verifiers should fall back to querying `/webhooks/public-key` on cache misses.
+
+---
+
+### Verification with the FluxaPay SDK
+
+The FluxaPay SDK provides `verifyWebhookSignature` which automatically detects the algorithm from the header prefix:
+
+```typescript
+import { verifyWebhookSignature } from "@fluxapay/sdk";
+
+// Verifies either HMAC-SHA256 or Ed25519 seamlessly:
+const isValid = verifyWebhookSignature(
+  rawBodyString,
+  req.headers["x-fluxapay-signature"],
+  secretOrPublicKey,
+);
+```
 
 ## Retry policy
 
