@@ -56,6 +56,55 @@ async function main() {
 }
 ```
 
+## On-Chain Event Types & Parsing (Issue #765)
+
+The SDK exports typed interfaces for all on-chain events emitted across FluxaPay contracts, plus a `parseFluxapayEvent` helper that discriminates raw Soroban RPC or Horizon event streams into strongly typed events.
+
+```typescript
+import {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type PaymentCreatedEvent,
+  type RefundCompletedEvent,
+  type StreamWithdrawnEvent,
+} from "@fluxapay/sdk";
+
+// Listen to Horizon or Soroban RPC events
+for (const rawEvent of eventsFromRpc) {
+  const event: FluxapayEvent = parseFluxapayEvent(rawEvent);
+
+  switch (event.type) {
+    case "PAYMENT/CREATED":
+      // TypeScript automatically narrows payload to PaymentCreatedPayload
+      console.log(`Payment created: ${event.payload.payment_id} for ${event.payload.amount} stroops`);
+      break;
+
+    case "REFUND/COMPLETED":
+      console.log(`Refund ${event.payload.refund_id} completed: ${event.payload.refund_amount} stroops`);
+      break;
+
+    case "STREAM/WITHDRAWN":
+      console.log(`Stream ${event.payload.stream_id} withdrawn: ${event.payload.amount} (memo: ${event.payload.memo})`);
+      break;
+
+    case "ACCESS_CONTROL/ADMIN_TRANSFER_PROPOSED":
+      console.log(`Admin transfer proposed for ${event.payload.new_admin} at ledger ${event.payload.earliest_acceptance_ledger}`);
+      break;
+
+    default:
+      console.log(`Event: ${event.type}`, event.payload);
+  }
+}
+```
+
+You can also import from the dedicated `events` namespace:
+
+```typescript
+import { events } from "@fluxapay/sdk";
+
+const parsed = events.parseFluxapayEvent(rawEvent);
+```
+
 ## Bulk payment status
 
 Reconciling a batch of orders with `getPayment` in a loop costs N sequential RPC

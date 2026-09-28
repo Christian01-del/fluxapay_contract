@@ -49,6 +49,7 @@ fn create_demo_invoice(
         &total_amount,
         &Symbol::new(env, "USDC"),
         &due_date,
+        &None,
     )
 }
 
@@ -97,6 +98,7 @@ fn test_invoice_total_matches_line_items() {
         &expected_total,
         &Symbol::new(&env, "USDC"),
         &(env.ledger().timestamp() + 100),
+        &None,
     );
 
     let invoice = client.get_invoice(&invoice_id);
@@ -176,6 +178,7 @@ fn test_get_merchant_invoices_pagination() {
             &100i128,
             &Symbol::new(&env, "USDC"),
             &1_000_000u64,
+            &None,
         );
         created.push_back(id);
     }
@@ -222,4 +225,71 @@ fn test_overdue_invoice_detection() {
         client.get_invoice(&invoice_id).status,
         InvoiceStatus::Overdue
     );
+}
+
+#[test]
+fn test_create_invoice_payment_link_verification() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = setup(&env);
+    let plm_contract_id = env.register(crate::payment_link::PaymentLinkManager, ());
+    let plm_client = crate::payment_link::PaymentLinkManagerClient::new(&env, &plm_contract_id);
+    let admin = Address::generate(&env);
+    client.set_payment_link_manager(&admin, &plm_contract_id);
+
+    let merchant1 = Address::generate(&env);
+    let merchant2 = Address::generate(&env);
+
+    let link_id = String::from_str(&env, "m1_link");
+    plm_client.create_link(
+        &merchant1,
+        &link_id,
+        &Some(1_000i128),
+        &Symbol::new(&env, "USDC"),
+        &String::from_str(&env, "Link"),
+        &None,
+        &None,
+        &false,
+        &None,
+        &crate::MaybeFiatConfig::None,
+        &None,
+    );
+
+    // 1. Valid link (same merchant) -> Ok
+    let inv_id = client.create_invoice(
+        &merchant1,
+        &String::from_str(&env, "customer@example.com"),
+        &vec![&env, line_item(&env, "Item", 1000, 1)],
+        &1000i128,
+        &Symbol::new(&env, "USDC"),
+        &(env.ledger().timestamp() + 1000),
+        &Some(link_id.clone()),
+    );
+    assert!(!inv_id.is_empty());
+
+    // 2. Non-existent link -> Err(InvalidPaymentLink)
+    let bad_link = String::from_str(&env, "no_such_link");
+    let res_not_found = client.try_create_invoice(
+        &merchant1,
+        &String::from_str(&env, "customer@example.com"),
+        &vec![&env, line_item(&env, "Item", 1000, 1)],
+        &1000i128,
+        &Symbol::new(&env, "USDC"),
+        &(env.ledger().timestamp() + 1000),
+        &Some(bad_link),
+    );
+    assert_eq!(res_not_found.err(), Some(Ok(Error::InvalidPaymentLink)));
+
+    // 3. Foreign merchant link -> Err(InvalidPaymentLink)
+    let res_foreign = client.try_create_invoice(
+        &merchant2,
+        &String::from_str(&env, "customer@example.com"),
+        &vec![&env, line_item(&env, "Item", 1000, 1)],
+        &1000i128,
+        &Symbol::new(&env, "USDC"),
+        &(env.ledger().timestamp() + 1000),
+        &Some(link_id),
+    );
+    assert_eq!(res_foreign.err(), Some(Ok(Error::InvalidPaymentLink)));
 }

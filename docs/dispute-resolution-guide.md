@@ -21,20 +21,37 @@ Typical triggers:
 
 ## 2) Dispute creation and required data
 
-A customer or buyer opens a dispute by calling `create_dispute`.
+A customer or buyer opens a dispute by calling `open_dispute` (or `create_dispute`).
 
 ### Required fields
 
 - `payment_id` — the original confirmed payment
 - `amount` — disputed amount, must be > 0 and <= payment amount
 - `reason` — short explanation
-- `evidence` — supporting documentation or proof
-- `disputer` — the address filing the dispute
+- `evidence` — supporting documentation, URL, or IPFS CID
+- `evidence_hash` — **SHA-256 of submitted evidence** (`BytesN<32>`), stored immutably on-chain
+- `disputer` / `opener` — the address filing the dispute
 - `payout_splits` — optional marketplace payout split configuration
+
+### Evidence integrity & on-chain hash verification (Issue #773)
+
+When a customer raises a dispute, evidence (documents, screenshots) is stored off-chain (or on IPFS). To prove that the retrieved evidence has not been tampered with after dispute submission, `open_dispute` stores the SHA-256 evidence hash (`BytesN<32>`) immutably on the `Dispute` record and includes it in the `DISPUTE/OPENED` event payload.
+
+Arbitrators, merchants, and observers can verify evidence integrity via the read-only view function:
+
+```bash
+stellar contract invoke \
+  --id $DISPUTE_CONTRACT_ID \
+  --network testnet \
+  -- verify_evidence \
+  --dispute_id 1
+```
+
+The returned 32-byte hex hash must match `sha256(downloaded_evidence_payload)`. The hash cannot be modified once set.
 
 ### Evidence format
 
-By default, non-empty evidence must be a valid IPFS CID (`CIDv0` or `CIDv1`). This protects the system from junk strings and makes evidence auditable.
+By default, non-empty evidence references must be valid URLs or IPFS CIDs (`CIDv0` or `CIDv1`). This protects the system from junk strings and makes evidence auditable.
 
 Examples:
 
@@ -61,15 +78,15 @@ This prevents spam disputes and ensures both parties have skin in the game. The 
 
 ```bash
 stellar contract invoke \
-  --id $REFUND_MANAGER_ID \
+  --id $DISPUTE_CONTRACT_ID \
   --network testnet \
   --source $TEST_CUSTOMER_ADDRESS \
-  -- create_dispute \
-  --payment_id "inv_20260329_001" \
-  --amount 1000000000 \
-  --reason "Item not received" \
-  --evidence "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG" \
-  --disputer $TEST_CUSTOMER_ADDRESS
+  -- open_dispute \
+  --opener $TEST_CUSTOMER_ADDRESS \
+  --payment_id 1001 \
+  --disputed_amount 1000000000 \
+  --bond_amount 20000000 \
+  --evidence_hash "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ```
 
 Expected result:

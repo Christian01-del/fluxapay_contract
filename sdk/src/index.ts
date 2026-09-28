@@ -36,6 +36,11 @@ import {
 
 export { FLUXAPAY_CONTRACT_IDS, UNSET_CONTRACT_ID } from "./network-profiles.js";
 export type { FluxapayContractIds } from "./network-profiles.js";
+export {
+  verifyWebhookSignature,
+  parseWebhookSignatureHeader,
+  type ParsedWebhookSignature,
+} from "./webhooks.js";
 import { FxOracleClient } from "./contracts/fx-oracle.js";
 import {
   MerchantRegistryClient,
@@ -43,7 +48,9 @@ import {
   type AddCurrencyPayoutParams,
   type CurrencyPayout,
   type BankAccount,
+  type MerchantPage,
 } from "./contracts/merchant-registry.js";
+export type { MerchantPage };
 import {
   PaymentLinkManagerClient,
   type PaymentLinkManagerConfig,
@@ -176,6 +183,34 @@ export interface CreatePaymentParams {
    * `confirmPayment({ tipAmount })`.
    */
   tipEnabled?: boolean;
+}
+
+/**
+ * Issue #771: A single payment request item within a batch creation transaction.
+ */
+export interface PaymentRequest {
+  paymentId: string;
+  amount: bigint;
+  currency: string;
+  depositAddress: string;
+  expiresAt?: bigint;
+  durationSecs?: bigint;
+  memo?: string;
+  memoType?: string;
+  tokenAddress?: string;
+  clientToken?: string;
+  metadata?: Record<string, string>;
+  feeWaiverCode?: string;
+  payer?: string;
+  payerMuxedId?: bigint;
+}
+
+/**
+ * Issue #771: Parameters for creating a batch of up to 10 payments.
+ */
+export interface CreatePaymentBatchParams {
+  merchantId: string;
+  payments: PaymentRequest[];
 }
 
 /** Mirrors the on-chain `StreamStatus` enum in `stream.rs`. */
@@ -897,6 +932,49 @@ export class FluxapayClient {
   }
 
   /**
+   * Issue #771: Create up to 10 payment charges atomically in a single transaction.
+   * Wraps the `create_payment_batch` contract entry point.
+   */
+  async createPaymentBatch(params: CreatePaymentBatchParams): Promise<string[]> {
+    if (params.payments.length > 10) {
+      throw new FluxapayError(39, "BatchTooLarge", "createPaymentBatch accepts a maximum of 10 items per batch");
+    }
+    return withMappedContractError(async () => {
+      const result = await (this.contract as any).create_payment_batch({
+        merchant_id: params.merchantId,
+        payments: params.payments.map((p) => ({
+          payment_id: p.paymentId,
+          amount: p.amount,
+          currency: p.currency,
+          deposit_address: p.depositAddress,
+          expires_at: p.expiresAt,
+          duration_secs: p.durationSecs,
+          memo: p.memo,
+          memo_type: p.memoType,
+          token_address: p.tokenAddress,
+          client_token: p.clientToken,
+          metadata_hash: undefined,
+          metadata: p.metadata,
+          fee_waiver_code: p.feeWaiverCode,
+          payer: p.payer,
+          payer_muxed_id: p.payerMuxedId,
+        })),
+      });
+      return (result as any)?.result ?? result;
+    });
+  }
+
+  /**
+   * Issue #763: Permissionlessly expire a pending payment whose TTL has elapsed.
+   * Returns PaymentExpired error if the payment has not yet expired.
+   */
+  async expirePayment(paymentId: string): Promise<void> {
+    return withMappedContractError(async () => {
+      await (this.contract as any).expire_payment({ payment_id: paymentId });
+    });
+  }
+
+  /**
    * Issue #856: Executes a token swap via DexRouter with slippage tolerance and max_slippage_bps guards.
    */
   async executeSwap(
@@ -1456,6 +1534,71 @@ export class FluxapayClient {
         disputer: params.disputer,
       }),
     );
+  }
+
+  /**
+   * Open a dispute with on-chain SHA-256 evidence hash verification (Issue #773).
+   * Accepts an optional evidenceHash (hex string, auto-decoded to 32 bytes).
+   */
+  async openDispute(params: {
+    paymentId: string | number;
+    amount: bigint | number;
+    reason?: string;
+    evidence?: string;
+    disputer?: string;
+    opener?: string;
+    evidenceHash?: string | Buffer | Uint8Array;
+    bondAmount?: bigint | number;
+  }) {
+    let hashBuf: Buffer;
+    if (params.evidenceHash) {
+      if (typeof params.evidenceHash === "string") {
+        hashBuf = Buffer.from(params.evidenceHash.replace(/^0x/, ""), "hex");
+      } else {
+        hashBuf = Buffer.from(params.evidenceHash);
+      }
+    } else {
+      const { createHash } = await import("node:crypto");
+      hashBuf = createHash("sha256").update(params.evidence ?? "").digest();
+    }
+
+    if (hashBuf.length !== 32) {
+      throw new Error(`evidenceHash must be 32 bytes (got ${hashBuf.length})`);
+    }
+
+    const caller = params.disputer || params.opener || "";
+    return withMappedContractError(async () => {
+      if (typeof (this.contract as any).open_dispute === "function") {
+        return (this.contract as any).open_dispute({
+          opener: caller,
+          payment_id: typeof params.paymentId === "number" ? BigInt(params.paymentId) : params.paymentId,
+          disputed_amount: BigInt(params.amount),
+          bond_amount: BigInt(params.bondAmount ?? 0),
+          evidence_hash: hashBuf,
+        });
+      }
+      return this.contract.create_dispute({
+        payment_id: String(params.paymentId),
+        amount: BigInt(params.amount),
+        reason: params.reason ?? "",
+        evidence: params.evidence ?? "",
+        disputer: caller,
+        evidence_hash: hashBuf,
+      });
+    });
+  }
+
+  /**
+   * Read-only view function to retrieve the stored SHA-256 evidence hash for a dispute (Issue #773).
+   */
+  async verifyEvidence(disputeId: string | number): Promise<string> {
+    return withMappedContractError(async () => {
+      const res = await (this.contract as any).verify_evidence({
+        dispute_id: typeof disputeId === "number" ? BigInt(disputeId) : disputeId,
+      });
+      const val = (res as { result?: any }).result ?? res;
+      return Buffer.from(val).toString("hex");
+    });
   }
 
   /**
@@ -2582,6 +2725,136 @@ export {
   type AdminAction,
   type FeeSplitConfig,
 } from "./contracts/admin-ops.js";
+
+// Issue #765: Export typed event payload interfaces, events namespace, and parseFluxapayEvent helper
+export * as events from "./events.js";
+export {
+  parseFluxapayEvent,
+  type FluxapayEvent,
+  type BaseFluxapayEvent,
+  type RawEventInput,
+  type PaymentCreatedEvent,
+  type PaymentCreatedPayload,
+  type PaymentConfirmedEvent,
+  type PaymentConfirmedPayload,
+  type PaymentVerifiedEvent,
+  type PaymentVerifiedPayload,
+  type PaymentSettledEvent,
+  type PaymentSettledPayload,
+  type PaymentCancelledEvent,
+  type PaymentCancelledPayload,
+  type PaymentExpiredEvent,
+  type PaymentExpiredPayload,
+  type PaymentPartiallyPaidEvent,
+  type PaymentPartiallyPaidPayload,
+  type PaymentOverpaidEvent,
+  type PaymentOverpaidPayload,
+  type PaymentFailedEvent,
+  type PaymentFailedPayload,
+  type RefundRequestedEvent,
+  type RefundRequestedPayload,
+  type RefundCreatedEvent,
+  type RefundCreatedPayload,
+  type RefundProcessedEvent,
+  type RefundProcessedPayload,
+  type RefundCompletedEvent,
+  type RefundCompletedPayload,
+  type RefundRejectedEvent,
+  type RefundRejectedPayload,
+  type DisputeCreatedEvent,
+  type DisputeCreatedPayload,
+  type DisputeReviewedEvent,
+  type DisputeReviewedPayload,
+  type DisputeResolvedEvent,
+  type DisputeResolvedPayload,
+  type DisputeRejectedEvent,
+  type DisputeRejectedPayload,
+  type DisputeEscalatedEvent,
+  type DisputeEscalatedPayload,
+  type DisputeBondReturnedEvent,
+  type DisputeBondReturnedPayload,
+  type DisputeBondForfeitedEvent,
+  type DisputeBondForfeitedPayload,
+  type MerchantRegisteredEvent,
+  type MerchantRegisteredPayload,
+  type MerchantUpdatedEvent,
+  type MerchantUpdatedPayload,
+  type MerchantVerifiedEvent,
+  type MerchantVerifiedPayload,
+  type MerchantSuspendedEvent,
+  type MerchantSuspendedPayload,
+  type MerchantReinstatedEvent,
+  type MerchantReinstatedPayload,
+  type KycTierUpgradedEvent,
+  type KycTierUpgradedPayload,
+  type LinkCreatedEvent,
+  type LinkCreatedPayload,
+  type LinkUsedEvent,
+  type LinkUsedPayload,
+  type LinkDeactivatedEvent,
+  type LinkDeactivatedPayload,
+  type LinkExpiredEvent,
+  type LinkExpiredPayload,
+  type LinkViewedEvent,
+  type LinkViewedPayload,
+  type SubscriptionCreatedEvent,
+  type SubscriptionCreatedPayload,
+  type SubscriptionChargedEvent,
+  type SubscriptionChargedPayload,
+  type SubscriptionCancelledEvent,
+  type SubscriptionCancelledPayload,
+  type SubscriptionExpiredEvent,
+  type SubscriptionExpiredPayload,
+  type StreamCreatedEvent,
+  type StreamCreatedPayload,
+  type StreamToppedUpEvent,
+  type StreamToppedUpPayload,
+  type StreamWithdrawnEvent,
+  type StreamWithdrawnPayload,
+  type StreamCancelledEvent,
+  type StreamCancelledPayload,
+  type StreamPausedEvent,
+  type StreamPausedPayload,
+  type StreamResumedEvent,
+  type StreamResumedPayload,
+  type StreamRateUpdatedEvent,
+  type StreamRateUpdatedPayload,
+  type StreamRateDecreasedEvent,
+  type StreamRateDecreasedPayload,
+  type StreamMilestoneApprovedEvent,
+  type StreamMilestoneApprovedPayload,
+  type StreamDestinationSetEvent,
+  type StreamDestinationSetPayload,
+  type StreamClosedEvent,
+  type StreamClosedPayload,
+  type RateUpdatedEvent,
+  type RateUpdatedPayload,
+  type RoleGrantedEvent,
+  type RoleGrantedPayload,
+  type RoleRevokedEvent,
+  type RoleRevokedPayload,
+  type AdminTransferProposedEvent,
+  type AdminTransferProposedPayload,
+  type AdminTransferCompletedEvent,
+  type AdminTransferCompletedPayload,
+  type AdminTransferCancelledEvent,
+  type AdminTransferCancelledPayload,
+  type FeeSplitUpdatedEvent,
+  type FeeSplitUpdatedPayload,
+  type TreasuryWithdrawnEvent,
+  type TreasuryWithdrawnPayload,
+  type ContractUpgradedEvent,
+  type ContractUpgradedPayload,
+  type InvoiceCreatedEvent,
+  type InvoiceCreatedPayload,
+  type InvoicePaidEvent,
+  type InvoicePaidPayload,
+  type InvoiceOverdueEvent,
+  type InvoiceOverduePayload,
+  type SwapExecutedEvent,
+  type SwapExecutedPayload,
+  type UnknownFluxapayEvent,
+} from "./events.js";
 
 
 
