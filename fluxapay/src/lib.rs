@@ -414,6 +414,10 @@ pub enum Error {
     TimelockNotExpired = 68,
     /// Issue #622: Evidence field is not a valid IPFS CID (CIDv0 starts with "Qm"/46 chars; CIDv1 starts with "bafy"/≥59 chars).
     InvalidEvidenceCid = 69,
+    /// Issue #836: Subscription is still in its free trial; no charge yet.
+    TrialActive = 70,
+    /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
+    TrialTooLong = 71,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
 }
@@ -795,6 +799,10 @@ pub struct Subscription {
     /// Affiliate fee in basis points (bps). If set and `affiliate` is Some,
     /// `affiliate_fee_bps / 10000` of each payment will be routed to the affiliate.
     pub affiliate_fee_bps: Option<u32>,
+    /// Issue #836: Ledger timestamp when the free trial ends. `None` if the
+    /// plan has no trial. While `now < trial_ends_at`, `charge_subscription`
+    /// returns `Error::TrialActive` and does not bill.
+    pub trial_ends_at: Option<u64>,
 }
 
 #[contracttype]
@@ -834,6 +842,9 @@ pub struct SubscriptionPlan {
     /// If non-empty, the plan amount will be distributed to the configured
     /// `SettlementSplit` recipients on each subscription charge.
     pub payout_splits: Vec<SettlementSplit>,
+    /// Issue #836: Optional free-trial length in days (max 90). When set,
+    /// subscribers are not charged until `trial_ends_at`.
+    pub trial_days: Option<u32>,
 }
 
 #[contracttype]
@@ -4633,6 +4644,7 @@ pub use merchant_registry::{
         amount: i128,
         currency: Symbol,
         billing_interval: BillingInterval,
+        trial_days: Option<u32>,
     ) -> Result<(), Error> {
         merchant.require_auth();
 
@@ -4642,6 +4654,12 @@ pub use merchant_registry::{
 
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        if let Some(days) = trial_days {
+            if days > MAX_TRIAL_DAYS {
+                return Err(Error::TrialTooLong);
+            }
         }
 
         let interval_secs = billing_interval.to_secs();
@@ -4657,6 +4675,7 @@ pub use merchant_registry::{
             billing_interval,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days,
         };
 
         env.storage()
@@ -4701,6 +4720,7 @@ pub use merchant_registry::{
             billing_interval: BillingInterval::Daily,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days: None,
         };
 
         env.storage()
@@ -4774,6 +4794,14 @@ pub use merchant_registry::{
         let subscription_id = format_id(&env, "sub_", counter);
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -4782,7 +4810,7 @@ pub use merchant_registry::{
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -4793,6 +4821,7 @@ pub use merchant_registry::{
             resume_at: None,
             affiliate: affiliate.clone(),
             affiliate_fee_bps,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -4818,8 +4847,19 @@ pub use merchant_registry::{
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id.clone(), payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        // Issue #836: emit TRIAL_STARTED when the plan includes a free trial.
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id.clone(), payer, plan_id, ends),
+            );
+        }
 
         Ok(subscription_id)
     }
@@ -4852,6 +4892,14 @@ pub use merchant_registry::{
         }
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -4860,7 +4908,7 @@ pub use merchant_registry::{
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -4871,6 +4919,7 @@ pub use merchant_registry::{
             resume_at: None,
             affiliate: None,
             affiliate_fee_bps: None,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -4895,8 +4944,18 @@ pub use merchant_registry::{
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id, payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id, payer, plan_id, ends),
+            );
+        }
 
         Ok(())
     }
@@ -5103,6 +5162,17 @@ pub use merchant_registry::{
             return Ok(subscription.status);
         }
 
+        // Issue #836: free trial — no charge until trial_ends_at.
+        if let Some(trial_ends) = subscription.trial_ends_at {
+            if now < trial_ends {
+                env.storage().persistent().set(
+                    &DataKey::Subscription(subscription_id.clone()),
+                    &subscription,
+                );
+                return Err(Error::TrialActive);
+            }
+        }
+
         // Check whether we are in a retry window or a normal due-date window.
         let is_retry = subscription.next_retry_at.is_some();
         let due = if is_retry {
@@ -5118,6 +5188,22 @@ pub use merchant_registry::{
                 &subscription,
             );
             return Ok(subscription.status);
+        }
+
+        // Issue #836: emit TRIAL_ENDED once when the first post-trial charge begins.
+        let ending_trial = subscription.trial_ends_at.is_some() && subscription.total_payments == 0;
+        if ending_trial {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_ENDED"),
+                ),
+                (
+                    subscription_id.clone(),
+                    subscription.payer_address.clone(),
+                    subscription.plan_id.clone(),
+                ),
+            );
         }
 
         // ── Attempt token transfer ────────────────────────────────────────────

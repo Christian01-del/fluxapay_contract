@@ -3457,6 +3457,7 @@ impl RefundManager {
         amount: i128,
         currency: Symbol,
         billing_interval: BillingInterval,
+        trial_days: Option<u32>,
     ) -> Result<(), Error> {
         merchant.require_auth();
 
@@ -3466,6 +3467,12 @@ impl RefundManager {
 
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        if let Some(days) = trial_days {
+            if days > MAX_TRIAL_DAYS {
+                return Err(Error::TrialTooLong);
+            }
         }
 
         let interval_secs = billing_interval.to_secs();
@@ -3481,6 +3488,7 @@ impl RefundManager {
             billing_interval,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days,
         };
 
         env.storage()
@@ -3525,6 +3533,7 @@ impl RefundManager {
             billing_interval: BillingInterval::Daily,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days: None,
         };
 
         env.storage()
@@ -3598,6 +3607,14 @@ impl RefundManager {
         let subscription_id = format_id(&env, "sub_", counter);
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -3606,7 +3623,7 @@ impl RefundManager {
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -3617,6 +3634,7 @@ impl RefundManager {
             resume_at: None,
             affiliate: affiliate.clone(),
             affiliate_fee_bps,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -3642,8 +3660,19 @@ impl RefundManager {
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id.clone(), payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        // Issue #836: emit TRIAL_STARTED when the plan includes a free trial.
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id.clone(), payer, plan_id, ends),
+            );
+        }
 
         Ok(subscription_id)
     }
@@ -3676,6 +3705,14 @@ impl RefundManager {
         }
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -3684,7 +3721,7 @@ impl RefundManager {
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -3695,6 +3732,7 @@ impl RefundManager {
             resume_at: None,
             affiliate: None,
             affiliate_fee_bps: None,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -3719,8 +3757,18 @@ impl RefundManager {
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id, payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id, payer, plan_id, ends),
+            );
+        }
 
         Ok(())
     }
@@ -3927,6 +3975,17 @@ impl RefundManager {
             return Ok(subscription.status);
         }
 
+        // Issue #836: free trial — no charge until trial_ends_at.
+        if let Some(trial_ends) = subscription.trial_ends_at {
+            if now < trial_ends {
+                env.storage().persistent().set(
+                    &DataKey::Subscription(subscription_id.clone()),
+                    &subscription,
+                );
+                return Err(Error::TrialActive);
+            }
+        }
+
         // Check whether we are in a retry window or a normal due-date window.
         let is_retry = subscription.next_retry_at.is_some();
         let due = if is_retry {
@@ -3942,6 +4001,22 @@ impl RefundManager {
                 &subscription,
             );
             return Ok(subscription.status);
+        }
+
+        // Issue #836: emit TRIAL_ENDED once when the first post-trial charge begins.
+        let ending_trial = subscription.trial_ends_at.is_some() && subscription.total_payments == 0;
+        if ending_trial {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_ENDED"),
+                ),
+                (
+                    subscription_id.clone(),
+                    subscription.payer_address.clone(),
+                    subscription.plan_id.clone(),
+                ),
+            );
         }
 
         // ── Attempt token transfer ────────────────────────────────────────────

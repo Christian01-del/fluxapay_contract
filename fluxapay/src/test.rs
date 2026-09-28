@@ -3303,6 +3303,7 @@ fn setup_refund_manager_with_plan(env: &Env) -> (RefundManagerClient<'_>, Addres
         &1000_000000i128,
         &Symbol::new(env, "USDC"),
         &crate::BillingInterval::Monthly,
+        &None,
     );
 
     (client, admin, plan_id)
@@ -3329,6 +3330,7 @@ fn test_process_refund_reentrancy_guard_normal_flow() {
         &1000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Monthly,
+        &None,
     );
 
     let payer = Address::generate(&env);
@@ -6200,6 +6202,7 @@ fn test_subscription_max_retries_cancelled() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     // Create subscription
@@ -6228,6 +6231,7 @@ fn test_subscription_retry_counter_reset_on_success() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     let subscription_id = client.subscribe(&payer, &plan_id, &None, &None, &MaybeFeeConfig::None);
@@ -6255,6 +6259,7 @@ fn test_admin_reactivate_max_retries_cancelled_subscription() {
         &100_000_000i128,
         &Symbol::new(&env, "USDC"),
         &crate::BillingInterval::Weekly,
+        &None,
     );
 
     let subscription_id = client.subscribe(&payer, &plan_id, &None, &None, &MaybeFeeConfig::None);

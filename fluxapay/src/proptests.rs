@@ -654,6 +654,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(
@@ -707,6 +708,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(
@@ -753,6 +755,7 @@ proptest! {
             &amount,
             &Symbol::new(&env, "USDC"),
             &BillingInterval::Weekly,
+            &None,
         );
 
         let sub_id = client.subscribe(
