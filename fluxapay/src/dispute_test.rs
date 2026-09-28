@@ -1318,3 +1318,34 @@ fn test_batch_create_disputes_rejects_oversized() {
     let result2 = refund_client.try_batch_create_disputes(&soroban_sdk::vec![&env], &21u32);
     assert_eq!(result2, Err(Ok(crate::Error::BatchTooLarge)));
 }
+
+#[test]
+fn test_open_dispute_stores_evidence_hash_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let opener = Address::generate(&env);
+    let payment_id = 42u64;
+    let disputed_amount = 100_000_000i128; // 10 USDC
+    let bond_amount = 10_000_000i128; // 1 USDC
+    let evidence_hash = BytesN::from_array(&env, &[0xab; 32]);
+
+    let dispute_id = crate::dispute::open_dispute(
+        &env,
+        opener.clone(),
+        payment_id,
+        disputed_amount,
+        bond_amount,
+        evidence_hash.clone(),
+    ).expect("open_dispute should succeed");
+
+    assert_eq!(dispute_id, 1);
+
+    // Verify stored evidence hash via read-only view function
+    let stored_hash = crate::dispute::verify_evidence(&env, dispute_id)
+        .expect("verify_evidence should succeed");
+    assert_eq!(stored_hash, evidence_hash);
+
+    // Check DISPUTE/OPENED event was published
+    assert!(has_dispute_event(&env, "OPENED"));
+}

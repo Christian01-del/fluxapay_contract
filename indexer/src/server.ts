@@ -7,6 +7,7 @@ import { requireSEP10Auth } from "./auth/middleware";
 import { loadSEP10AuthConfig } from "./auth/config";
 import { sseManager } from "./sse";
 import {
+  getPlatformEd25519PublicKey,
   registerWebhookRoutes,
   WebhookStore,
 } from "./webhooks";
@@ -177,6 +178,18 @@ export function createServer(
 
   app.get("/v1/events/stream", requireSEP10Auth(sep10Config), sseHandler);
   app.get("/events/stream", requireSEP10Auth(sep10Config), sseHandler);
+
+  // GET /webhooks/public-key (Issue #775): Unauthenticated public key endpoint for webhook verification
+  const publicKeyHandler = (_req: Request, res: Response) => {
+    const key = getPlatformEd25519PublicKey();
+    res.status(200).json({
+      algorithm: "ed25519",
+      public_key: key,
+      publicKey: key,
+    });
+  };
+  app.get("/webhooks/public-key", publicKeyHandler);
+  app.get("/v1/webhooks/public-key", publicKeyHandler);
 
   // All subsequent routes require API-key authentication
   app.use(requireApiKey);

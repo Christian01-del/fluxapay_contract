@@ -82,12 +82,38 @@ jobs:
 
       - name: Check Documentation
         run: cargo doc --no-deps
+
+  # Job 2b: Supply Chain & Security (cargo-deny & cargo-audit)
+  cargo-deny:
+    name: Cargo Deny Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses advisories
+
+  cargo-audit:
+    name: Cargo Audit Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Security audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   # Job 3: Build the contract
   build:
     name: Build Contract
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [format, lint]
+    needs: [format, lint, cargo-deny, cargo-audit]
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

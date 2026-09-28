@@ -1079,7 +1079,7 @@ fn test_create_and_get_refund() {
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
     let reason = String::from_str(&env, "Reason");
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     // Register payment so refund amount can be validated
     client.register_payment(
@@ -1106,7 +1106,7 @@ fn test_process_refund() {
     let payment_id = String::from_str(&env, "payment_123");
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1139,7 +1139,7 @@ fn test_process_refund_within_expiry_window_succeeds() {
 
     let payment_id = String::from_str(&env, "payment_expiry_ok");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1177,7 +1177,7 @@ fn test_process_refund_rejects_after_expiry() {
     let refund_amount = 1000i128;
     let payment_id = String::from_str(&env, "payment_expiry_bad");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1217,7 +1217,7 @@ fn test_claim_refund_before_approval_fails() {
     let payment_id = String::from_str(&env, "payment_claim_2");
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1256,11 +1256,11 @@ fn test_expire_refund_clears_pending_expired_refund() {
     let payment_id = String::from_str(&env, "payment_claim_3");
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let stranger = Address::generate(&env);
     let payment_id = String::from_str(&env, "payment_expire_cleanup");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1294,7 +1294,7 @@ fn test_double_claim_refund_blocked() {
     let payment_id = String::from_str(&env, "payment_claim_4");
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1327,7 +1327,7 @@ fn test_expire_refund_clears_pending() {
 
     let payment_id = String::from_str(&env, "payment_expire");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1373,7 +1373,7 @@ fn test_process_refund_accumulates_treasury_and_withdraws() {
     let payment_ids = ["refund_treasury_a", "refund_treasury_b"];
     for payment_suffix in payment_ids.iter() {
         let payment_id = String::from_str(&env, payment_suffix);
-        let requester = Address::generate(&env);
+        let requester = merchant_id.clone();
 
         client.register_payment(
             &payment_id,
@@ -1429,7 +1429,7 @@ fn test_set_refund_expiry_configures_window() {
 
     let payment_id = String::from_str(&env, "payment_custom_expiry");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1462,7 +1462,7 @@ fn test_create_refund_fails_for_blacklisted_requester() {
 
     let payment_id = String::from_str(&env, "refund_blacklisted_requester");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1577,7 +1577,7 @@ fn test_multiple_refunds_unique_ids() {
 
     let payment_id = String::from_str(&env, "payment_123");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1638,7 +1638,7 @@ fn test_create_refund_requires_auth() {
 
     let payment_id = String::from_str(&env, "payment_123");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1729,7 +1729,7 @@ fn test_process_refund_deducts_fee_from_requester() {
     let payment_id = String::from_str(&env, "payment_fee_1");
     let merchant_id = Address::generate(&env);
     let refund_amount = 10_000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1764,7 +1764,7 @@ fn test_process_refund_sends_fee_to_admin() {
     let payment_id = String::from_str(&env, "payment_fee_2");
     let merchant_id = Address::generate(&env);
     let refund_amount = 10_000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1797,7 +1797,7 @@ fn test_cancel_refund_by_requester() {
 
     let payment_id = String::from_str(&env, "payment_cancel_1");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1831,7 +1831,7 @@ fn test_cancel_refund_by_admin() {
 
     let payment_id = String::from_str(&env, "payment_cancel_2");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1860,7 +1860,7 @@ fn test_cancel_refund_unauthorized() {
 
     let payment_id = String::from_str(&env, "payment_cancel_3");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1888,7 +1888,7 @@ fn test_cancel_refund_already_processed() {
 
     let payment_id = String::from_str(&env, "payment_cancel_4");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1920,7 +1920,7 @@ fn test_cancel_refund_emits_event() {
 
     let payment_id = String::from_str(&env, "payment_cancel_5");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1950,7 +1950,7 @@ fn test_cancel_refund_already_cancelled() {
 
     let payment_id = String::from_str(&env, "payment_cancel_6");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -1979,7 +1979,7 @@ fn test_cancel_refund_does_not_count_toward_total() {
 
     let payment_id = String::from_str(&env, "payment_cancel_7");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -2056,7 +2056,7 @@ fn test_refund_fee_bps_applied_on_process() {
 
     let payment_id = String::from_str(&env, "pay_fee_bps");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let refund_amount = 10_000i128;
 
     client.register_payment(
@@ -2093,7 +2093,7 @@ fn test_refund_total_equals_payment_amount_succeeds() {
 
     let payment_id = String::from_str(&env, "pay_exact");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let amount = 1000i128;
 
     client.register_payment(
@@ -2122,7 +2122,7 @@ fn test_refund_exceeds_payment_amount_rejected() {
 
     let payment_id = String::from_str(&env, "pay_over");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -2149,7 +2149,7 @@ fn test_cumulative_refunds_exceed_payment_amount_rejected() {
 
     let payment_id = String::from_str(&env, "pay_cumulative");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -2186,7 +2186,7 @@ fn test_partial_refunds_tracked_in_payment_refunds_list() {
 
     let payment_id = String::from_str(&env, "pay_partial");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -2233,7 +2233,7 @@ fn test_rejected_refund_does_not_count_toward_total() {
 
     let payment_id = String::from_str(&env, "pay_rejected");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -2701,7 +2701,7 @@ fn test_cumulative_refunds_exceed_payment_amount_fails() {
 
     let payment_id = String::from_str(&env, "pay_cumulative_1");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let payment_amount = 1000i128;
 
     client.register_payment(
@@ -2737,7 +2737,7 @@ fn test_refund_exactly_equal_to_payment_amount_succeeds() {
 
     let payment_id = String::from_str(&env, "pay_exact_1");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let payment_amount = 1000i128;
 
     client.register_payment(
@@ -2767,7 +2767,7 @@ fn test_second_refund_after_full_refund_fails() {
 
     let payment_id = String::from_str(&env, "pay_full_then_extra");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let payment_amount = 1000i128;
 
     client.register_payment(
@@ -2803,7 +2803,7 @@ fn test_rejected_refunds_not_counted_in_cumulative_total() {
 
     let payment_id = String::from_str(&env, "pay_rejected_refund");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     let payment_amount = 1000i128;
 
     client.register_payment(
@@ -3792,7 +3792,7 @@ fn test_process_refund_reentrancy_lock_cleared() {
     let payment_id = String::from_str(&env, "payment_reentrancy_2");
     let merchant_id = Address::generate(&env);
     let refund_amount = 1000i128;
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -3835,7 +3835,7 @@ fn test_process_refund_same_id_only_once() {
 
     let payment_id = String::from_str(&env, "payment_concurrent_refund");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     client.register_payment(
         &payment_id,
@@ -5440,7 +5440,7 @@ fn test_refund_fee_accumulates_in_treasury() {
 
     let payment_id = String::from_str(&env, "treasury_refund_accum");
     let merchant_id = Address::generate(&env);
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     client.register_payment(
         &payment_id,
         &merchant_id,
@@ -5506,7 +5506,7 @@ fn test_refund_cooldown_enforcement() {
     let payment_id = String::from_str(&env, "cooldown_pay");
     make_confirmed_payment(&env, &client, &admin, &payment_id, amount);
 
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     // Try to create refund immediately (within cooldown) - should fail
     let res = client.try_create_refund(
@@ -5549,7 +5549,7 @@ fn test_refund_cooldown_allows_after_period() {
         li.timestamp = 302;
     });
 
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     // Now create refund should succeed
     let res = client.try_create_refund(
@@ -5589,7 +5589,7 @@ fn test_refund_cooldown_configurable() {
     let payment_id = String::from_str(&env, "immediate_refund");
     make_confirmed_payment(&env, &client, &admin, &payment_id, amount);
 
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
 
     // With cooldown = 0, refund should succeed immediately
     let res = client.try_create_refund(
@@ -6013,7 +6013,7 @@ fn test_withdraw_treasury_reduces_balance_and_logs_history() {
     client.grant_role(&admin, &role_settlement_operator(&env), &operator);
 
     let payment_id = String::from_str(&env, "withdraw_hist_pay");
-    let requester = Address::generate(&env);
+    let requester = merchant_id.clone();
     client.register_payment(
         &payment_id,
         &merchant_id,
@@ -6528,4 +6528,92 @@ fn test_batch_expire_payments_empty_vec() {
 
     // Empty batch should return 0
     assert_eq!(count, 0);
+}
+
+#[test]
+fn test_refund_requester_authorization_payer_ok() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client) = setup_refund_manager(&env);
+
+    let payment_id = String::from_str(&env, "pay_auth_payer");
+    let merchant_id = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    client.register_payment_with_payer(
+        &payment_id,
+        &merchant_id,
+        &payer,
+        &5000i128,
+        &Symbol::new(&env, "USDC"),
+    );
+
+    let refund_id = client.create_refund(
+        &payment_id,
+        &1000i128,
+        &String::from_str(&env, "Payer refund request"),
+        &payer,
+    );
+    let refund = client.get_refund(&refund_id);
+    assert_eq!(refund.payment_id, payment_id);
+    assert_eq!(refund.requester, payer);
+    assert_eq!(refund.status, RefundStatus::Pending);
+}
+
+#[test]
+fn test_refund_requester_authorization_merchant_ok() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client) = setup_refund_manager(&env);
+
+    let payment_id = String::from_str(&env, "pay_auth_merchant");
+    let merchant_id = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    client.register_payment_with_payer(
+        &payment_id,
+        &merchant_id,
+        &payer,
+        &5000i128,
+        &Symbol::new(&env, "USDC"),
+    );
+
+    let refund_id = client.create_refund(
+        &payment_id,
+        &1000i128,
+        &String::from_str(&env, "Merchant refund request"),
+        &merchant_id,
+    );
+    let refund = client.get_refund(&refund_id);
+    assert_eq!(refund.payment_id, payment_id);
+    assert_eq!(refund.requester, merchant_id);
+    assert_eq!(refund.status, RefundStatus::Pending);
+}
+
+#[test]
+fn test_refund_requester_authorization_unauthorized_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client) = setup_refund_manager(&env);
+
+    let payment_id = String::from_str(&env, "pay_auth_random");
+    let merchant_id = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let random_address = Address::generate(&env);
+
+    client.register_payment_with_payer(
+        &payment_id,
+        &merchant_id,
+        &payer,
+        &5000i128,
+        &Symbol::new(&env, "USDC"),
+    );
+
+    let result = client.try_create_refund(
+        &payment_id,
+        &1000i128,
+        &String::from_str(&env, "Random attacker refund request"),
+        &random_address,
+    );
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }

@@ -240,6 +240,7 @@ Before marking a PR ready for review:
 
 - [ ] All tests pass (`make test`)
 - [ ] No new Clippy warnings (`cargo clippy --all-targets --all-features -- -D warnings`)
+- [ ] Automated CI security checks (`cargo-deny` and `cargo-audit`) pass (enforced via branch protection rules targeting `main`)
 - [ ] `CHANGELOG.md` updated under `## Unreleased` (or PR has the `skip-changelog` label for non-user-facing changes)
 - [ ] New features and bug fixes include tests
 - [ ] PR title follows Conventional Commits format

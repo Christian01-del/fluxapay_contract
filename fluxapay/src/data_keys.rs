@@ -175,5 +175,6 @@ pub enum DataKey {
     /// storage does not persist across transactions, so this cache is safe and
     /// lets `GasEstimator::estimate_payment_fee` avoid repeated cross-contract
     /// `balance` calls within a single batch (e.g. 5 estimates → 1 read).
-    CachedBalance,
+    /// Address of configured PaymentLinkManager contract for invoice cross-calls.
+    PaymentLinkManagerAddress,
 }

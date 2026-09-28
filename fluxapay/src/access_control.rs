@@ -125,9 +125,14 @@ pub enum AccessControlDataKey {
     Proposal(u64),
 }
 
+/// Issue #764: Minimum timelock period before proposed admin transfer can be accepted.
+/// ~1 day in ledgers (assuming ~5 seconds per ledger on Stellar network: 86,400 / 5 = 17,280 ledgers).
+pub const MIN_TIMELOCK_LEDGERS: u32 = 17_280;
+
 pub struct AccessControl;
 
 impl AccessControl {
+
     pub fn initialize(env: &Env, admin: Address) {
         env.storage()
             .persistent()
@@ -629,11 +634,13 @@ impl AccessControl {
             return Err(AccessControlError::PendingAdminTransfer);
         }
 
-        // Start pending transfer instead of immediate
-        let now = env.ledger().timestamp();
+        let current_ledger = env.ledger().sequence();
+        let earliest_acceptance_ledger = current_ledger + MIN_TIMELOCK_LEDGERS;
+
+        // Stores pending admin and the earliest acceptance ledger
         env.storage().persistent().set(
             &AccessControlDataKey::PendingAdminTransfer,
-            &(new_admin.clone(), now),
+            &(new_admin.clone(), earliest_acceptance_ledger),
         );
 
         env.events().publish(
@@ -641,7 +648,7 @@ impl AccessControl {
                 Symbol::new(env, "ACCESS_CONTROL"),
                 Symbol::new(env, "ADMIN_TRANSFER_PROPOSED"),
             ),
-            (new_admin.clone(), now),
+            (new_admin.clone(), earliest_acceptance_ledger),
         );
 
         Ok(())
@@ -655,19 +662,25 @@ impl AccessControl {
         Self::propose_admin(env, current_admin, new_admin)
     }
 
-    pub fn claim_admin(env: &Env, new_admin: Address) -> Result<(), AccessControlError> {
+    /// Issue #764: Accept admin transfer after timelock period has elapsed.
+    /// Panics if called before the timelock expires or by a non-pending address.
+    pub fn accept_admin(env: &Env, new_admin: Address) -> Result<(), AccessControlError> {
         new_admin.require_auth();
-        let (pending_admin, _proposed_at): (Address, u64) = env
+        let (pending_admin, earliest_ledger): (Address, u32) = env
             .storage()
             .persistent()
             .get(&AccessControlDataKey::PendingAdminTransfer)
-            .ok_or(AccessControlError::PendingAdminTransfer)?;
+            .unwrap_or_else(|| panic!("No pending admin transfer"));
 
         if pending_admin != new_admin {
-            return Err(AccessControlError::Unauthorized);
+            panic!("Caller is not the pending admin");
         }
 
-        let now = env.ledger().timestamp();
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < earliest_ledger {
+            panic!("Admin transfer timelock has not expired");
+        }
+
         let old_admin = Self::get_admin(env).unwrap();
 
         Self::revoke_role_internal(env, &role_admin(env), &old_admin);
@@ -680,6 +693,7 @@ impl AccessControl {
             .persistent()
             .remove(&AccessControlDataKey::PendingAdminTransfer);
 
+        let now = env.ledger().timestamp();
         env.events().publish(
             (
                 Symbol::new(env, "ACCESS_CONTROL"),
@@ -691,10 +705,15 @@ impl AccessControl {
         Ok(())
     }
 
-    pub fn accept_admin_transfer(env: &Env, new_admin: Address) -> Result<(), AccessControlError> {
-        Self::claim_admin(env, new_admin)
+    pub fn claim_admin(env: &Env, new_admin: Address) -> Result<(), AccessControlError> {
+        Self::accept_admin(env, new_admin)
     }
 
+    pub fn accept_admin_transfer(env: &Env, new_admin: Address) -> Result<(), AccessControlError> {
+        Self::accept_admin(env, new_admin)
+    }
+
+    /// Issue #764: Abort pending admin transfer, clearing the pending proposal.
     pub fn cancel_admin_transfer(
         env: &Env,
         current_admin: Address,
@@ -716,10 +735,19 @@ impl AccessControl {
             .persistent()
             .remove(&AccessControlDataKey::PendingAdminTransfer);
 
+        let now = env.ledger().timestamp();
+        env.events().publish(
+            (
+                Symbol::new(env, "ACCESS_CONTROL"),
+                Symbol::new(env, "ADMIN_TRANSFER_CANCELLED"),
+            ),
+            (current_admin, now),
+        );
+
         Ok(())
     }
 
-    pub fn get_pending_admin_transfer(env: &Env) -> Option<(Address, u64)> {
+    pub fn get_pending_admin_transfer(env: &Env) -> Option<(Address, u32)> {
         env.storage()
             .persistent()
             .get(&AccessControlDataKey::PendingAdminTransfer)
@@ -767,10 +795,10 @@ impl AccessControl {
         }
 
         let now = env.ledger().timestamp();
-        let lock_in = 30 * 24 * 60 * 60; // 30 days for recovery-initiated transfer
+        let earliest_ledger = env.ledger().sequence() + MIN_TIMELOCK_LEDGERS;
         env.storage().persistent().set(
             &AccessControlDataKey::PendingAdminTransfer,
-            &(new_admin.clone(), now),
+            &(new_admin.clone(), earliest_ledger),
         );
         env.storage()
             .persistent()
