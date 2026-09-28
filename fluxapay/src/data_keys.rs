@@ -134,6 +134,14 @@ pub enum DataKey {
     AllowProratedRefunds,
     /// Paginated log of treasury withdrawals (newest-first, capped at 100).
     TreasuryWithdrawalHistory,
+    /// Treasury multisig configuration for withdrawal governance (M-of-N + timelock).
+    TreasuryMultisigConfig,
+    /// Counter for treasury withdrawal proposal IDs.
+    TreasuryProposalCounter,
+    /// Treasury withdrawal proposals keyed by proposal ID.
+    TreasuryWithdrawalProposal(String),
+    /// Per-token treasury balance for multi-token support.
+    TokenTreasuryBalance(Address),
     /// Issue #485: Marks a payment as created from a direct_transfer payment link.
     /// Prevents future disputes from being created for this payment.
     DirectTransferPayment(String),
