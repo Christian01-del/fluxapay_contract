@@ -18,11 +18,18 @@ export {
   computeSignature,
   DELIVERY_ID_HEADER,
   EVENT_TYPE_HEADER,
+  getPlatformEd25519PrivateKey,
+  getPlatformEd25519PublicKey,
   parseSignatureHeader,
+  rotatePlatformEd25519Key,
   SIGNATURE_HEADER,
   SIGNATURE_TOLERANCE_SECONDS,
   signedPayload,
+  signEd25519Payload,
+  TIMESTAMP_HEADER,
+  verifyEd25519Signature,
   verifySignature,
+  verifyWebhookSignature,
 } from "./signing";
 export {
   DEFAULT_DELIVERY_PAGE_SIZE,
@@ -39,4 +46,5 @@ export {
   type WebhookEndpoint,
   type WebhookEventType,
   type WebhookEnvelope,
+  type WebhookSigningAlgorithm,
 } from "./types";

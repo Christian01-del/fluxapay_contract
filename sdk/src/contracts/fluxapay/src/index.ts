@@ -77,6 +77,8 @@ export interface CreatePaymentArgs {
   payer_muxed_id?: Option<u64 | bigint>;
   /** Issue #516 */
   payer?: Option<string>;
+  /** Issue #844: when true, confirmPayment may accept tipAmount. */
+  tip_enabled: boolean;
 }
 
 export interface Merchant {

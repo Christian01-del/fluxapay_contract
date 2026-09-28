@@ -36,7 +36,7 @@ fn test_swap_and_pay_with_unregistered_router_rejected() {
 }
 
 #[test]
-fn test_swap_and_pay_after_router_removed_is_rejected() {
+fn test_removed_router_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 

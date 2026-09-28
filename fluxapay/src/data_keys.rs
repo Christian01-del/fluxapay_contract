@@ -48,10 +48,14 @@ pub enum DataKey {
     DisputeArbitratorVotes(String),
     /// Locked stake for a dispute arbitrator: (dispute_id, arbitrator) → amount
     DisputeStake(String, Address),
-    /// Vote cast by an arbitrator: (dispute_id, arbitrator) → VoteChoice
+    /// Vote cast by an arbitrator: (dispute_id, arbitrator) → StakeWeightedVote
     DisputeVote(String, Address),
     /// Tally of votes for a dispute
     DisputeVoteTally(String),
+    /// Issue #843: Admin-configurable weighted quorum in basis points.
+    WeightedQuorumBps,
+    /// Issue #846: Pending time-locked WASM upgrade proposal.
+    PendingWasmUpgrade,
     /// Cross-contract address of the configured FX oracle (Issue #304).
     FxOracleAddress,
     /// Whether `process_refund` requires a `receipt_hash` on refunds (Issue #176).
@@ -175,5 +179,6 @@ pub enum DataKey {
     /// storage does not persist across transactions, so this cache is safe and
     /// lets `GasEstimator::estimate_payment_fee` avoid repeated cross-contract
     /// `balance` calls within a single batch (e.g. 5 estimates → 1 read).
-    CachedBalance,
+    /// Address of configured PaymentLinkManager contract for invoice cross-calls.
+    PaymentLinkManagerAddress,
 }

@@ -386,7 +386,40 @@ function LivePaymentFeed({ merchantId, token }: { merchantId: string; token: str
 }
 ```
 
-## License
+### Payment Status Polling (`usePaymentStatus`)
 
+Issue #769: Polls payment status with exponential backoff, stopping automatically on terminal statuses or when the component unmounts:
+
+```tsx
+import { usePaymentStatus } from "@fluxapay/react";
+
+function PaymentStatusTracker({ paymentId }: { paymentId: string }) {
+  const { status, payment, error, loading, refetch } = usePaymentStatus(paymentId, {
+    pollIntervalMs: 2000, // initial interval (2s)
+    maxBackoffMs: 30000,  // maximum backoff cap (30s)
+    stopOnStatuses: ["confirmed", "failed", "expired"],
+  });
+
+  if (loading && !payment) return <p>Checking status...</p>;
+  if (error) {
+    return (
+      <div>
+        <p>Error polling status: {error.message}</p>
+        <button onClick={refetch}>Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p>Current Status: {status}</p>
+      {payment && <p>Amount: {payment.amount.toString()}</p>}
+      <button onClick={refetch}>Refresh Status</button>
+    </div>
+  );
+}
+```
+
+## License
 
 MIT

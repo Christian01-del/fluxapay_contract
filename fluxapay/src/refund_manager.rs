@@ -355,6 +355,15 @@ impl RefundManager {
         AccessControl::claim_admin(&env, new_admin).map_err(|_| Error::AccessControlError)
     }
 
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        AccessControl::accept_admin(&env, new_admin).map_err(|_| Error::AccessControlError)
+    }
+
+    pub fn cancel_admin_transfer(env: Env, current_admin: Address) -> Result<(), Error> {
+        AccessControl::cancel_admin_transfer(&env, current_admin)
+            .map_err(|_| Error::AccessControlError)
+    }
+
     pub fn transfer_admin(
         env: Env,
         current_admin: Address,
@@ -459,6 +468,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -632,6 +643,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
             env.storage()
                 .persistent()
@@ -639,6 +652,59 @@ impl RefundManager {
             Self::bump_payment_ttl(&env, &payment_id, &payment.status);
 
             // Issue #184: Track confirmed payment count per merchant for dispute rate calculation
+            let count_key = DataKey::MerchantPaymentCount(merchant_id.clone());
+            let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
+            env.storage().persistent().set(&count_key, &(count + 1));
+            Self::bump_ttl(&env, &count_key, LONG_LIVE_TTL);
+        }
+    }
+
+    /// Helper for tests to register a confirmed payment with an explicit payer address.
+    pub fn register_payment_with_payer(
+        env: Env,
+        payment_id: String,
+        merchant_id: Address,
+        payer: Address,
+        amount: i128,
+        currency: Symbol,
+    ) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Payment(payment_id_to_key(&env, &payment_id)))
+        {
+            let payment = PaymentCharge {
+                payment_id: payment_id.clone(),
+                merchant_id: merchant_id.clone(),
+                amount,
+                currency,
+                deposit_address: env.current_contract_address(),
+                status: PaymentStatus::Confirmed,
+                payer_address: Some(payer),
+                transaction_hash: None,
+                created_at: env.ledger().timestamp(),
+                confirmed_at: Some(env.ledger().timestamp()),
+                expires_at: 0,
+                amount_received: None,
+                memo: None,
+                memo_type: None,
+                token_address: None,
+                metadata_hash: None,
+                original_token: None,
+                swap_path: None,
+                fx_rate: None,
+                fx_rate_at: None,
+                metadata: None,
+                fee_waiver_code: None,
+                retry_of_payment_id: None,
+                payer_muxed_id: None,
+                payment_link_id: None,
+            };
+            env.storage()
+                .persistent()
+                .set(&DataKey::Payment(payment_id_to_key(&env, &payment_id)), &payment);
+            Self::bump_payment_ttl(&env, &payment_id, &payment.status);
+
             let count_key = DataKey::MerchantPaymentCount(merchant_id.clone());
             let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
             env.storage().persistent().set(&count_key, &(count + 1));
@@ -806,6 +872,32 @@ impl RefundManager {
         };
         Self::require_not_blacklisted(env, &payment.merchant_id)?;
         Self::require_not_blacklisted(env, &requester)?;
+
+        // Issue #770: Verify requester is the original payment payer or merchant
+        let is_payer = payment.payer_address.as_ref().map_or(false, |p| *p == requester);
+        let mut is_merchant = requester == payment.merchant_id;
+
+        if !is_payer && !is_merchant {
+            if let Some(registry_address) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+            {
+                let registry_client =
+                    crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+                if let Ok(Ok(merchant)) = registry_client.try_get_merchant(&payment.merchant_id) {
+                    if requester == merchant.merchant_id
+                        || merchant.payout_address.as_ref() == Some(&requester)
+                    {
+                        is_merchant = true;
+                    }
+                }
+            }
+        }
+
+        if !is_payer && !is_merchant {
+            return Err(Error::Unauthorized);
+        }
 
         // Issue #76: Reject refunds unless payment.status == Confirmed or Overpaid
         if payment.status != PaymentStatus::Confirmed && payment.status != PaymentStatus::Overpaid {
@@ -1855,6 +1947,17 @@ impl RefundManager {
             .set(&dispute_count_key, &new_dispute_count);
         Self::bump_ttl(env, &dispute_count_key, LONG_LIVE_TTL);
 
+        // Issue #833: Cross-call MerchantRegistry so KYC scoring sees the dispute.
+        if let Some(registry_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::MerchantRegistryAddress)
+        {
+            let registry_client =
+                crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
+            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+        }
+
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
         let payment_count: u64 = env
             .storage()
@@ -2762,18 +2865,12 @@ impl RefundManager {
         result
     }
 
-    // ─── Stake-weighted dispute voting (issue #33) ────────────────────────────
+    // ─── Stake-weighted dispute voting (issues #33 / #843) ───────────────────
 
     /// Lock a governance-token stake to participate in dispute voting.
     ///
-    /// The arbitrator transfers `amount` tokens into the contract as a stake.
-    /// The stake is slashed if the arbitrator votes against the majority.
-    ///
-    /// # Parameters
-    /// * `arbitrator`  – Address locking the stake; must sign.
-    /// * `dispute_id`  – Dispute to vote on.
-    /// * `token`       – Governance token contract address.
-    /// * `amount`      – Amount to lock (must be > 0).
+    /// Issue #843: `amount` must be at least [`MIN_ARBITRATOR_STAKE`] so the
+    /// derived vote weight (`stake / VOTE_WEIGHT_UNIT`) is ≥ 1.
     pub fn lock_stake(
         env: Env,
         arbitrator: Address,
@@ -2783,27 +2880,44 @@ impl RefundManager {
     ) -> Result<(), Error> {
         arbitrator.require_auth();
 
-        if amount <= 0 {
+        if amount < MIN_ARBITRATOR_STAKE {
             return Err(Error::InvalidAmount);
         }
 
-        // Dispute must exist and be open / under review
         let dispute = Self::get_dispute_internal(&env, &dispute_id)?;
         if dispute.status == DisputeStatus::Resolved || dispute.status == DisputeStatus::Rejected {
             return Err(Error::DisputeAlreadyResolved);
         }
 
-        // Prevent double-staking
         let stake_key = DataKey::DisputeStake(dispute_id.clone(), arbitrator.clone());
         if env.storage().persistent().has(&stake_key) {
             return Err(Error::Unauthorized);
         }
 
-        // Effects: record stake before token transfer
+        let vote_weight = amount / VOTE_WEIGHT_UNIT;
+        if vote_weight <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
         env.storage().persistent().set(&stake_key, &amount);
         Self::bump_ttl(&env, &stake_key, LONG_LIVE_TTL);
 
-        // Interaction: pull stake from arbitrator
+        let tally_key = DataKey::DisputeVoteTally(dispute_id.clone());
+        let mut tally: VoteTally = env
+            .storage()
+            .persistent()
+            .get(&tally_key)
+            .unwrap_or(VoteTally {
+                favour_weight: 0,
+                against_weight: 0,
+                vote_count: 0,
+                total_registered_weight: 0,
+            });
+        tally.total_registered_weight =
+            tally.total_registered_weight.saturating_add(vote_weight);
+        env.storage().persistent().set(&tally_key, &tally);
+        Self::bump_ttl(&env, &tally_key, LONG_LIVE_TTL);
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&arbitrator, env.current_contract_address(), &amount);
 
@@ -2818,15 +2932,8 @@ impl RefundManager {
         Ok(())
     }
 
-    /// Cast a stake-weighted vote on a dispute.
-    ///
-    /// The arbitrator must have locked a stake first via `lock_stake`.
-    /// Each arbitrator may only vote once per dispute.
-    ///
-    /// # Parameters
-    /// * `arbitrator` – Voting arbitrator; must sign.
-    /// * `dispute_id` – Dispute to vote on.
-    /// * `choice`     – `VoteChoice::Favour` or `VoteChoice::Against`.
+    /// Cast a stake-weighted vote. Stores binary choice + `vote_weight`
+    /// derived from `lock_stake` (`stake / VOTE_WEIGHT_UNIT`).
     pub fn cast_vote(
         env: Env,
         arbitrator: Address,
@@ -2835,13 +2942,11 @@ impl RefundManager {
     ) -> Result<(), Error> {
         arbitrator.require_auth();
 
-        // Dispute must be open / under review
         let dispute = Self::get_dispute_internal(&env, &dispute_id)?;
         if dispute.status == DisputeStatus::Resolved || dispute.status == DisputeStatus::Rejected {
             return Err(Error::DisputeAlreadyResolved);
         }
 
-        // Arbitrator must have a locked stake
         let stake_key = DataKey::DisputeStake(dispute_id.clone(), arbitrator.clone());
         let stake: i128 = env
             .storage()
@@ -2849,32 +2954,41 @@ impl RefundManager {
             .get(&stake_key)
             .ok_or(Error::Unauthorized)?;
 
-        // Prevent double-voting
+        let vote_weight = stake / VOTE_WEIGHT_UNIT;
+        if vote_weight <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
         let vote_key = DataKey::DisputeVote(dispute_id.clone(), arbitrator.clone());
         if env.storage().persistent().has(&vote_key) {
             return Err(Error::Unauthorized);
         }
 
-        // Record vote
-        env.storage().persistent().set(&vote_key, &choice);
+        let weighted_vote = StakeWeightedVote {
+            choice: choice.clone(),
+            vote_weight,
+        };
+        env.storage().persistent().set(&vote_key, &weighted_vote);
         Self::bump_ttl(&env, &vote_key, LONG_LIVE_TTL);
 
-        // Update tally
         let tally_key = DataKey::DisputeVoteTally(dispute_id.clone());
-        let mut tally: VoteTally =
-            env.storage()
-                .persistent()
-                .get(&tally_key)
-                .unwrap_or(VoteTally {
-                    favour_weight: 0,
-                    against_weight: 0,
-                    vote_count: 0,
-                });
+        let mut tally: VoteTally = env
+            .storage()
+            .persistent()
+            .get(&tally_key)
+            .unwrap_or(VoteTally {
+                favour_weight: 0,
+                against_weight: 0,
+                vote_count: 0,
+                total_registered_weight: 0,
+            });
 
         match choice {
-            VoteChoice::Favour => tally.favour_weight = tally.favour_weight.saturating_add(stake),
+            VoteChoice::Favour => {
+                tally.favour_weight = tally.favour_weight.saturating_add(vote_weight)
+            }
             VoteChoice::Against => {
-                tally.against_weight = tally.against_weight.saturating_add(stake)
+                tally.against_weight = tally.against_weight.saturating_add(vote_weight)
             }
         }
         tally.vote_count = tally.vote_count.saturating_add(1);
@@ -2884,23 +2998,14 @@ impl RefundManager {
 
         env.events().publish(
             (Symbol::new(&env, "DISPUTE"), Symbol::new(&env, "VOTE_CAST")),
-            (dispute_id, arbitrator, stake),
+            (dispute_id, arbitrator, vote_weight),
         );
 
         Ok(())
     }
 
-    /// Finalize a dispute based on stake-weighted votes.
-    ///
-    /// The majority side wins. Arbitrators who voted against the majority
-    /// lose 10% of their stake (slashed to the contract admin). Winners
-    /// receive their stake back.
-    ///
-    /// # Parameters
-    /// * `operator`    – Settlement operator or oracle; must sign.
-    /// * `dispute_id`  – Dispute to finalize.
-    /// * `token`       – Governance token used for stakes.
-    /// * `arbitrators` – List of all arbitrators who participated.
+    /// Finalize using weighted quorum (`WEIGHTED_QUORUM_BPS` of total
+    /// registered stake), not raw vote count.
     pub fn finalize_dispute_vote(
         env: Env,
         operator: Address,
@@ -2931,20 +3036,37 @@ impl RefundManager {
                 favour_weight: 0,
                 against_weight: 0,
                 vote_count: 0,
+                total_registered_weight: 0,
             });
 
-        // Determine majority
-        let favour_wins = tally.favour_weight >= tally.against_weight;
-        let majority = if favour_wins {
-            VoteChoice::Favour
+        let quorum_bps = Self::get_weighted_quorum_bps(env.clone());
+        let total = tally.total_registered_weight;
+        if total <= 0 {
+            return Err(Error::ArbitrationVotingThresholdNotMet);
+        }
+
+        let favour_quorum = tally.favour_weight.saturating_mul(10_000)
+            > total.saturating_mul(quorum_bps as i128);
+        let against_quorum = tally.against_weight.saturating_mul(10_000)
+            > total.saturating_mul(quorum_bps as i128);
+
+        let (favour_wins, majority) = if favour_quorum && !against_quorum {
+            (true, VoteChoice::Favour)
+        } else if against_quorum && !favour_quorum {
+            (false, VoteChoice::Against)
+        } else if favour_quorum && against_quorum {
+            if tally.favour_weight >= tally.against_weight {
+                (true, VoteChoice::Favour)
+            } else {
+                (false, VoteChoice::Against)
+            }
         } else {
-            VoteChoice::Against
+            return Err(Error::ArbitrationVotingThresholdNotMet);
         };
 
         let token_client = token::Client::new(&env, &token);
-        let slash_bps: i128 = 1_000; // 10% slash
+        let slash_bps: i128 = 1_000;
 
-        // Return stakes; slash minority voters
         for arb in arbitrators.iter() {
             let stake_key = DataKey::DisputeStake(dispute_id.clone(), arb.clone());
             let stake: i128 = match env.storage().persistent().get(&stake_key) {
@@ -2953,21 +3075,17 @@ impl RefundManager {
             };
 
             let vote_key = DataKey::DisputeVote(dispute_id.clone(), arb.clone());
-            let vote: VoteChoice = match env.storage().persistent().get(&vote_key) {
+            let vote: StakeWeightedVote = match env.storage().persistent().get(&vote_key) {
                 Some(v) => v,
                 None => continue,
             };
 
-            let voted_with_majority = vote == majority;
-
-            // Effects: remove stake record
+            let voted_with_majority = vote.choice == majority;
             env.storage().persistent().remove(&stake_key);
 
             if voted_with_majority {
-                // Return full stake
                 token_client.transfer(&env.current_contract_address(), &arb, &stake);
             } else {
-                // Slash 10%, return remainder
                 let slash = stake * slash_bps / 10_000;
                 let remainder = stake.saturating_sub(slash);
                 if remainder > 0 {
@@ -2981,9 +3099,7 @@ impl RefundManager {
             }
         }
 
-        // Resolve or reject the dispute based on vote outcome
         if favour_wins {
-            // Majority voted in favour — issue refund
             let refund_reason =
                 String::from_str(&env, "Resolved by stake-weighted arbitration vote");
             if let Ok(refund_id) = Self::create_refund_internal(
@@ -3033,6 +3149,42 @@ impl RefundManager {
         Ok(())
     }
 
+    /// Issue #843: Admin-configurable weighted quorum (bps of total registered stake).
+    pub fn set_weighted_quorum_bps(env: Env, admin: Address, bps: u32) -> Result<(), Error> {
+        admin.require_auth();
+        if !AccessControl::has_role(&env, &role_admin(&env), &admin) {
+            return Err(Error::Unauthorized);
+        }
+        if bps == 0 || bps > 10_000 {
+            return Err(Error::InvalidAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::WeightedQuorumBps, &bps);
+        Ok(())
+    }
+
+    /// Issue #843: Return the current weighted quorum in basis points.
+    pub fn get_weighted_quorum_bps(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::WeightedQuorumBps)
+            .unwrap_or(WEIGHTED_QUORUM_BPS)
+    }
+
+    /// Get the current vote tally for a dispute.
+    pub fn get_vote_tally(env: Env, dispute_id: String) -> VoteTally {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DisputeVoteTally(dispute_id))
+            .unwrap_or(VoteTally {
+                favour_weight: 0,
+                against_weight: 0,
+                vote_count: 0,
+                total_registered_weight: 0,
+            })
+    }
+
     /// Cast a role-gated vote on a dispute. Unlike [`Self::cast_vote`] (which
     /// is stake-weighted), this flow simply counts one vote per
     /// `ARBITRATOR`-role address and auto-executes the resolution as soon as
@@ -3075,7 +3227,7 @@ impl RefundManager {
                 .unwrap_or(ArbitratorVoteTally {
                     approve_count: 0,
                     reject_count: 0,
-                });
+        });
 
         match choice {
             ArbitratorVoteChoice::Approve => {
@@ -3147,18 +3299,6 @@ impl RefundManager {
         );
 
         Ok(())
-    }
-
-    /// Get the current vote tally for a dispute.
-    pub fn get_vote_tally(env: Env, dispute_id: String) -> VoteTally {
-        env.storage()
-            .persistent()
-            .get(&DataKey::DisputeVoteTally(dispute_id))
-            .unwrap_or(VoteTally {
-                favour_weight: 0,
-                against_weight: 0,
-                vote_count: 0,
-            })
     }
 
     pub fn get_dispute(env: Env, dispute_id: String) -> Result<Dispute, Error> {
@@ -3317,6 +3457,7 @@ impl RefundManager {
         amount: i128,
         currency: Symbol,
         billing_interval: BillingInterval,
+        trial_days: Option<u32>,
     ) -> Result<(), Error> {
         merchant.require_auth();
 
@@ -3326,6 +3467,12 @@ impl RefundManager {
 
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        if let Some(days) = trial_days {
+            if days > MAX_TRIAL_DAYS {
+                return Err(Error::TrialTooLong);
+            }
         }
 
         let interval_secs = billing_interval.to_secs();
@@ -3341,6 +3488,7 @@ impl RefundManager {
             billing_interval,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days,
         };
 
         env.storage()
@@ -3385,6 +3533,7 @@ impl RefundManager {
             billing_interval: BillingInterval::Daily,
             active: true,
             payout_splits: Vec::new(&env),
+            trial_days: None,
         };
 
         env.storage()
@@ -3458,6 +3607,14 @@ impl RefundManager {
         let subscription_id = format_id(&env, "sub_", counter);
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -3466,7 +3623,7 @@ impl RefundManager {
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -3477,6 +3634,7 @@ impl RefundManager {
             resume_at: None,
             affiliate: affiliate.clone(),
             affiliate_fee_bps,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -3502,8 +3660,19 @@ impl RefundManager {
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id.clone(), payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        // Issue #836: emit TRIAL_STARTED when the plan includes a free trial.
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id.clone(), payer, plan_id, ends),
+            );
+        }
 
         Ok(subscription_id)
     }
@@ -3536,6 +3705,14 @@ impl RefundManager {
         }
 
         let now = env.ledger().timestamp();
+        // Issue #836: delay first charge until trial ends when plan has trial_days.
+        let trial_ends_at = plan.trial_days.map(|days| {
+            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
+        });
+        let next_payment_at = match trial_ends_at {
+            Some(ends) => ends,
+            None => now.saturating_add(plan.interval_secs),
+        };
         let subscription = Subscription {
             subscription_id: subscription_id.clone(),
             merchant_id: plan.merchant_id.clone(),
@@ -3544,7 +3721,7 @@ impl RefundManager {
             amount: plan.amount,
             currency: plan.currency,
             interval_secs: plan.interval_secs,
-            next_payment_at: now.saturating_add(plan.interval_secs),
+            next_payment_at,
             status: SubscriptionStatus::Active,
             created_at: now,
             last_payment_at: None,
@@ -3555,6 +3732,7 @@ impl RefundManager {
             resume_at: None,
             affiliate: None,
             affiliate_fee_bps: None,
+            trial_ends_at,
         };
 
         env.storage().persistent().set(
@@ -3579,8 +3757,18 @@ impl RefundManager {
                 Symbol::new(&env, "SUBSCRIPTION"),
                 Symbol::new(&env, "CREATED"),
             ),
-            (subscription_id, payer, plan_id),
+            (subscription_id.clone(), payer.clone(), plan_id.clone()),
         );
+
+        if let Some(ends) = trial_ends_at {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_STARTED"),
+                ),
+                (subscription_id, payer, plan_id, ends),
+            );
+        }
 
         Ok(())
     }
@@ -3787,6 +3975,17 @@ impl RefundManager {
             return Ok(subscription.status);
         }
 
+        // Issue #836: free trial — no charge until trial_ends_at.
+        if let Some(trial_ends) = subscription.trial_ends_at {
+            if now < trial_ends {
+                env.storage().persistent().set(
+                    &DataKey::Subscription(subscription_id.clone()),
+                    &subscription,
+                );
+                return Err(Error::TrialActive);
+            }
+        }
+
         // Check whether we are in a retry window or a normal due-date window.
         let is_retry = subscription.next_retry_at.is_some();
         let due = if is_retry {
@@ -3802,6 +4001,22 @@ impl RefundManager {
                 &subscription,
             );
             return Ok(subscription.status);
+        }
+
+        // Issue #836: emit TRIAL_ENDED once when the first post-trial charge begins.
+        let ending_trial = subscription.trial_ends_at.is_some() && subscription.total_payments == 0;
+        if ending_trial {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "SUBSCRIPTION"),
+                    Symbol::new(&env, "TRIAL_ENDED"),
+                ),
+                (
+                    subscription_id.clone(),
+                    subscription.payer_address.clone(),
+                    subscription.plan_id.clone(),
+                ),
+            );
         }
 
         // ── Attempt token transfer ────────────────────────────────────────────
@@ -4165,6 +4380,8 @@ impl RefundManager {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            tip_enabled: false,
+            tip_amount: None,
         };
 
         env.storage()
@@ -4524,6 +4741,8 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
 
             env.storage()
@@ -4696,5 +4915,24 @@ impl RefundManager {
             admin,
             TimelockActionKind::UpgradeContract(new_wasm_hash),
         )
+    }
+
+    /// Issue #846: Propose a time-locked WASM upgrade (delegates to PaymentProcessor storage shape).
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        PaymentProcessor::propose_upgrade(env, admin, new_wasm_hash)
+    }
+
+    /// Issue #846: Execute a pending upgrade after the timelock.
+    pub fn execute_upgrade(env: Env, admin: Address) -> Result<(), Error> {
+        PaymentProcessor::execute_upgrade(env, admin)
+    }
+
+    /// Issue #846: Cancel a pending upgrade proposal.
+    pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), Error> {
+        PaymentProcessor::cancel_upgrade(env, admin)
     }
 }

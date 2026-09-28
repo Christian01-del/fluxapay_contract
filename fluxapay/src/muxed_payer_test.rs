@@ -83,6 +83,7 @@ fn test_create_payment_with_g_address_payer_muxed_id_is_none() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     let payment = payment_client.try_create_payment(&args);
@@ -122,6 +123,7 @@ fn test_verify_payment_with_muxed_sender_populates_muxed_id() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     payment_client.create_payment(&args);
@@ -171,6 +173,7 @@ fn test_verify_payment_without_muxed_id_remains_none() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     payment_client.create_payment(&args);
@@ -221,6 +224,7 @@ fn test_muxed_payer_auth_not_checked_in_create_or_verify() {
         fee_waiver_code: None,
         retry_of_payment_id: None,
         payer_muxed_id: None,
+            tip_enabled: false,
     };
 
     payment_client.create_payment(&args);
