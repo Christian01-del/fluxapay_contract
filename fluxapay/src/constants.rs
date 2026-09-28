@@ -4,6 +4,10 @@ pub const PAYMENT_TOLERANCE: i128 = 1;
 pub const SHORT_LIVE_TTL: u32 = 120_960; // ~1 week at 5s/ledger
 pub const LONG_LIVE_TTL: u32 = 18_921_600; // ~3 years at 5s/ledger
 pub const TTL_BUMP_THRESHOLD_DIVISOR: u32 = 5;
+/// Issue #768: Minimum persistent storage TTL for completed payment records (~120 days at 5s/ledger).
+pub const MIN_PERSISTENT_TTL: u32 = (120 * 24 * 60 * 60) / 5; // 2_073_600 ledgers
+/// Issue #768: Minimum TTL threshold before extending persistent payment records (~30 days at 5s/ledger).
+pub const MIN_BUMP_TTL: u32 = (30 * 24 * 60 * 60) / 5; // 518_400 ledgers
 pub const CREATE_PAYMENT_WINDOW_SECS: u64 = 60;
 pub const CREATE_PAYMENT_MAX_PER_WINDOW: u32 = 30;
 pub const DEFAULT_PAYMENT_DURATION_SECS: u64 = 3_600;
@@ -57,6 +61,14 @@ pub const TIER_CAP_UNVERIFIED: i128 = 5_000_000_000; // $500
 pub const TIER_CAP_BASIC: i128 = 100_000_000_000; // $10,000
 pub const TIER_CAP_FULL: i128 = 1_000_000_000_000; // $100,000
 pub const TIER_CAP_BUSINESS: i128 = i128::MAX; // unlimited
+
+// Issue #777: KYC tier per-payment and monthly volume limits (in USDC stroops, 7 decimals, ADR-0003)
+pub const TIER_0_MAX_SINGLE: i128 = 1_000_000_000; // 100 USDC
+pub const TIER_0_MAX_MONTHLY: i128 = 5_000_000_000; // 500 USDC
+pub const TIER_1_MAX_SINGLE: i128 = 100_000_000_000; // 10,000 USDC
+pub const TIER_1_MAX_MONTHLY: i128 = 500_000_000_000; // 50,000 USDC
+pub const TIER_2_MAX_SINGLE: i128 = i128::MAX; // Unlimited
+pub const TIER_2_MAX_MONTHLY: i128 = i128::MAX; // Unlimited
 
 // Issue #207: Cumulative volume thresholds for automatic KYC tier upgrades (in USDC stroops)
 pub const TIER_UPGRADE_THRESHOLD_BASIC: i128 = TIER_CAP_UNVERIFIED; // $500 cumulative → Basic

@@ -56,6 +56,34 @@ async function main() {
 }
 ```
 
+## Error Handling
+
+The SDK translates all Soroban contract error codes into typed JavaScript `FluxapayError` subclasses (such as `KycLimitExceededError`, `PaymentExpiredError`, `PaymentNotFoundError`, etc.), allowing developers to catch specific error conditions using standard `instanceof` checks.
+
+For the full list of error classes, corresponding contract error codes, and handling guidance, see the **[Error Reference Guide](./docs/error-reference.md)**.
+
+```typescript
+import {
+  FluxapayError,
+  KycLimitExceededError,
+  PaymentExpiredError,
+} from "@fluxapay/sdk";
+
+try {
+  await client.createPayment({ ... });
+} catch (error) {
+  if (error instanceof KycLimitExceededError) {
+    console.error("KYC limit exceeded. Upgrade merchant verification.");
+  } else if (error instanceof PaymentExpiredError) {
+    console.error("Payment has expired.");
+  } else if (error instanceof FluxapayError) {
+    console.error(`Contract error #${error.code} (${error.contractErrorName}):`, error.localizedMessage);
+  } else {
+    throw error;
+  }
+}
+```
+
 ## Bulk payment status
 
 Reconciling a batch of orders with `getPayment` in a loop costs N sequential RPC

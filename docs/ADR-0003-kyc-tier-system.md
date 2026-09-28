@@ -1,18 +1,17 @@
 # ADR-0003: KYC Tier System
 
-- Status: Accepted
-- Date: 2026-08-29
+- Status: Implemented
+- Date: 2026-08-29 (Updated: 2026-09-28)
 
 ## Context
 
 FluxaPay processes merchant payments, refunds, and settlement flows at scale, and the protocol needs a way to classify merchants by compliance and operational risk. A single “verified / unverified” signal is too coarse: it cannot represent meaningful differences in merchant volume, settlement exposure, or onboarding risk.
 
-The contract therefore models a four-tier KYC ladder:
+The contract therefore models a KYC tier system:
 
-- `Unverified`
-- `Basic`
-- `Full`
-- `Business`
+- Tier 0 (`Unverified`): Unverified merchants starting on the platform.
+- Tier 1 (`Basic`): Verified merchants with standard compliance vetting.
+- Tier 2 (`Full` / `Business`): Fully verified enterprise merchants.
 
 This model exists to balance three competing goals:
 
@@ -20,22 +19,26 @@ This model exists to balance three competing goals:
 2. Keep onboarding friction low for smaller merchants and early-stage businesses.
 3. Allow higher-volume or more trusted merchants to access broader payment capabilities without imposing unnecessary friction on all users.
 
-The actual tier caps and auto-upgrade thresholds are defined in `fluxapay/src/constants.rs` and enforced in `fluxapay/src/lib.rs` / `fluxapay/src/payment_processor.rs` via the `MerchantMonthlyVolume` and `MerchantCumulativeVolume` checks.
+The tier caps and enforcement are defined in `fluxapay/src/constants.rs` and enforced on-chain during `create_payment` via cross-contract calls to `MerchantRegistry::check_kyc_limit`.
 
 ## Decision
 
-Adopt a four-tier KYC system with increasing monthly payment caps and cumulative auto-upgrade criteria.
+Enforce on-chain KYC tier limits on single payments and monthly volume before storing payments:
 
 ### Tier caps
 
-The current contract values are:
+| Tier | Max Single Payment | Max Monthly Volume |
+|---|---|---|
+| Tier 0 (`Unverified`) | 100 USDC (`100_000_000` stroops) | 500 USDC (`500_000_000` stroops) |
+| Tier 1 (`Basic`) | 10,000 USDC (`10_000_000_000` stroops) | 50,000 USDC (`50_000_000_000` stroops) |
+| Tier 2 (`Full` / `Business`) | Unlimited | Unlimited |
 
-| Tier | Monthly cap (USDC) | Contract constant |
-|------|--------------------|------------------|
-| `Unverified` | $500 | `TIER_CAP_UNVERIFIED` |
-| `Basic` | $10,000 | `TIER_CAP_BASIC` |
-| `Full` | $100,000 | `TIER_CAP_FULL` |
-| `Business` | Unlimited | `TIER_CAP_BUSINESS` |
+### Enforcement Architecture
+
+1. `MerchantRegistry` maintains monthly volume under `MerchantMonthlyVolume(merchant_id, year_month)`.
+2. The `year_month` key (`year * 100 + month`) resets on the 1st of each month UTC based on ledger timestamp calculation.
+3. `PaymentProcessor::create_payment` calls `MerchantRegistry::check_kyc_limit(&merchant_id, &amount)`.
+4. If either the single payment amount or the cumulative monthly total exceeds the merchant's tier ceiling, the transaction reverts with `KycLimitExceeded` (contract error #71, or registry error #12).
 
 These values are stored as stroops, using the standard stablecoin denomination in the codebase:
 

@@ -39,6 +39,12 @@ fn is_valid_transition(from: &PaymentStatus, to: &PaymentStatus) -> bool {
             | (PaymentStatus::Pending, PaymentStatus::Failed)
             | (PaymentStatus::Pending, PaymentStatus::PartiallyPaid)
             | (PaymentStatus::Pending, PaymentStatus::Overpaid)
+            // From PartiallyPaid (Issue #767)
+            | (PaymentStatus::PartiallyPaid, PaymentStatus::PartiallyPaid)
+            | (PaymentStatus::PartiallyPaid, PaymentStatus::Confirmed)
+            | (PaymentStatus::PartiallyPaid, PaymentStatus::Overpaid)
+            | (PaymentStatus::PartiallyPaid, PaymentStatus::Expired)
+            | (PaymentStatus::PartiallyPaid, PaymentStatus::Failed)
             // From Confirmed
             | (PaymentStatus::Confirmed, PaymentStatus::Settled)
             | (PaymentStatus::Confirmed, PaymentStatus::Disputed)

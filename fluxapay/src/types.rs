@@ -47,6 +47,8 @@ pub struct PaymentCharge {
     pub payer_muxed_id: Option<u64>,
     /// Issue #668: ID of the payment link that created this payment via `use_link`
     pub payment_link_id: Option<String>,
+    /// Issue #767: When true, allows funding the payment across multiple transactions.
+    pub allow_partial: Option<bool>,
 }
 
 #[contracttype]
@@ -353,6 +355,8 @@ pub enum Error {
     InvalidEvidenceCid = 69,
     /// Payment link does not exist or belongs to a different merchant.
     InvalidPaymentLink = 70,
+    /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
+    KycLimitExceeded = 71,
 }
 
 #[contracttype]
@@ -382,6 +386,8 @@ pub struct CreatePaymentArgs {
     /// Customer/payer address, checked against the merchant's whitelist when
     /// `Merchant.whitelist_mode` is enabled (issue #516).
     pub payer: Option<Address>,
+    /// Issue #767: Optional flag to allow partial payment accumulation.
+    pub allow_partial: Option<bool>,
 }
 
 /// Arguments for a single dispute in `batch_create_disputes` / `create_dispute`.

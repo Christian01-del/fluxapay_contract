@@ -71,6 +71,7 @@ export interface CreatePaymentArgs {
    */
   metadata: Option<Record<string, string>>;
   fee_waiver_code: Option<string>;
+  allow_partial?: Option<boolean>;
 }
 
 export interface Merchant {
@@ -440,6 +441,26 @@ export interface Client {
   ) => Promise<AssembledTransaction<Result<PaymentStatus>>>;
 
   /**
+   * Construct and simulate a confirm_payment transaction.
+   */
+  confirm_payment: (
+    {
+      oracle,
+      payment_id,
+      transaction_hash,
+      payer_address,
+      amount_received,
+    }: {
+      oracle: string;
+      payment_id: string;
+      transaction_hash: Buffer;
+      payer_address: string;
+      amount_received: i128;
+    },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<PaymentStatus>>>;
+
+  /**
    * Construct and simulate a refund_grant_role transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   refund_grant_role: (
@@ -730,6 +751,7 @@ export class Client extends ContractClient {
     expire_payment: (json: string) => (this as any).txFromJSON(json),
     settle_payment: (json: string) => (this as any).txFromJSON(json),
     verify_payment: (json: string) => (this as any).txFromJSON(json),
+    confirm_payment: (json: string) => (this as any).txFromJSON(json),
     refund_grant_role: (json: string) => (this as any).txFromJSON(json),
     refund_revoke_role: (json: string) => (this as any).txFromJSON(json),
     get_payment_refunds: (json: string) => (this as any).txFromJSON(json),

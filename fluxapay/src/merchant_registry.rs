@@ -220,6 +220,8 @@ pub enum MerchantDataKey {
     /// Issue #667: Arbitrary on-chain contract metadata (description, deployment
     /// notes, audit commit hash, etc.), keyed by an admin-chosen Symbol.
     ContractMetadata(Symbol),
+    /// Issue #777: Monthly processing volume per merchant, keyed by (merchant_address, month_code)
+    MerchantMonthlyVolume(Address, u32),
 }
 
 /// ~3 years at 5s/ledger — mirrors `LONG_LIVE_TTL` in lib.rs (issue #667).
@@ -270,6 +272,8 @@ pub enum MerchantError {
     ProposalNotFound = 9,
     ProposalExpired = 10,
     DuplicateVote = 11,
+    /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
+    KycLimitExceeded = 12,
 }
 
 #[cfg_attr(
@@ -2199,5 +2203,81 @@ impl MerchantRegistry {
         );
 
         Ok(())
+    }
+
+    /// Issue #777: Cross-contract function to enforce KYC tier limits during payment creation.
+    /// Checks single-payment limit and calendar monthly volume cap.
+    /// Resets monthly volume on the 1st of each month (UTC).
+    /// Returns `KycLimitExceeded` if payment exceeds either limit.
+    pub fn check_kyc_limit(env: Env, merchant_id: Address, amount: i128) -> Result<(), MerchantError> {
+        let merchant = Self::get_merchant_internal(&env, &merchant_id)?;
+
+        if !merchant.active || merchant.suspension_reason.is_some() {
+            return Err(MerchantError::Unauthorized);
+        }
+
+        let (max_single, max_monthly) = match merchant.kyc_tier {
+            KycTier::Unverified => (crate::TIER_0_MAX_SINGLE, crate::TIER_0_MAX_MONTHLY),
+            KycTier::Basic => (crate::TIER_1_MAX_SINGLE, crate::TIER_1_MAX_MONTHLY),
+            KycTier::Full | KycTier::Business => (crate::TIER_2_MAX_SINGLE, crate::TIER_2_MAX_MONTHLY),
+        };
+
+        if amount > max_single {
+            return Err(MerchantError::KycLimitExceeded);
+        }
+
+        if max_monthly != i128::MAX {
+            let (year, month) = Self::get_year_month(env.ledger().timestamp());
+            let month_code = year * 100 + month;
+            let key = MerchantDataKey::MerchantMonthlyVolume(merchant_id.clone(), month_code);
+            let current_vol: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+            let new_vol = current_vol.saturating_add(amount);
+            if new_vol > max_monthly {
+                return Err(MerchantError::KycLimitExceeded);
+            }
+            env.storage().persistent().set(&key, &new_vol);
+            Self::bump_persistent_ttl(&env, &key, LONG_LIVE_TTL);
+        }
+
+        Ok(())
+    }
+
+    /// Issue #777: Query current monthly volume for a merchant in the current UTC month.
+    pub fn get_monthly_volume(env: Env, merchant_id: Address) -> i128 {
+        let (year, month) = Self::get_year_month(env.ledger().timestamp());
+        let month_code = year * 100 + month;
+        let key = MerchantDataKey::MerchantMonthlyVolume(merchant_id, month_code);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    /// Issue #777: Query KYC tier as numeric level (0 = Unverified, 1 = Basic, 2 = Full/Business).
+    pub fn get_kyc_tier_level(env: Env, merchant_id: Address) -> Result<u8, MerchantError> {
+        let merchant = Self::get_merchant_internal(&env, &merchant_id)?;
+        Ok(match merchant.kyc_tier {
+            KycTier::Unverified => 0,
+            KycTier::Basic => 1,
+            KycTier::Full | KycTier::Business => 2,
+        })
+    }
+
+    /// Helper to bump persistent storage TTL.
+    fn bump_persistent_ttl(env: &Env, key: &MerchantDataKey, ttl: u32) {
+        let threshold = core::cmp::max(1, ttl / TTL_BUMP_THRESHOLD_DIVISOR);
+        env.storage().persistent().extend_ttl(key, threshold, ttl);
+    }
+
+    /// Compute (year, month) in UTC from Unix epoch timestamp using Euclidean affine transform.
+    pub fn get_year_month(timestamp: u64) -> (u32, u32) {
+        let days = (timestamp / 86400) as i64;
+        let z = days + 719468;
+        let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+        let doe = (z - era * 146097) as u32;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = (yoe as i64) + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        (y as u32, m)
     }
 }
