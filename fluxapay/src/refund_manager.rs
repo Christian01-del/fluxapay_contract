@@ -1955,7 +1955,10 @@ impl RefundManager {
         {
             let registry_client =
                 crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
-            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+            let _ = registry_client.try_increment_merchant_dispute_count(
+                &env.current_contract_address(),
+                &merchant_id,
+            );
         }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
@@ -1991,6 +1994,7 @@ impl RefundManager {
                     );
                     let thirty_days_secs: u64 = 30 * 24 * 60 * 60;
                     let _ = registry_client.try_suspend_merchant_by_system(
+                        &env.current_contract_address(),
                         &merchant_id,
                         &suspension_reason,
                         &thirty_days_secs,

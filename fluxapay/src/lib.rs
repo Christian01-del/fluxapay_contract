@@ -3213,7 +3213,10 @@ pub use merchant_registry::{
         {
             let registry_client =
                 crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
-            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+            let _ = registry_client.try_increment_merchant_dispute_count(
+                &env.current_contract_address(),
+                &merchant_id,
+            );
         }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
@@ -3249,6 +3252,7 @@ pub use merchant_registry::{
                     );
                     let thirty_days_secs: u64 = 30 * 24 * 60 * 60;
                     let _ = registry_client.try_suspend_merchant_by_system(
+                        &env.current_contract_address(),
                         &merchant_id,
                         &suspension_reason,
                         &thirty_days_secs,
@@ -10198,7 +10202,11 @@ impl PaymentProcessor {
         registry_client.clear_pending_settlement(&merchant_id);
 
         // Update last_settlement_at on the merchant record.
-        registry_client.set_last_settlement_at(&merchant_id, &now);
+        registry_client.set_last_settlement_at(
+            &env.current_contract_address(),
+            &merchant_id,
+            &now,
+        );
 
         // Emit MERCHANT/SETTLEMENT_TRIGGERED event.
         env.events().publish(
