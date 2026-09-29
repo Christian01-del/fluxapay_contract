@@ -359,14 +359,36 @@ pub enum Error {
     InvalidEvidenceCid = 69,
     /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
     MuxedAccountMismatch = 70,
+    /// Treasury multisig configuration not set or invalid.
+    TreasuryMultisigNotConfigured = 71,
+    /// Caller is not an authorized treasury multisig signer.
+    NotAuthorizedTreasurySigner = 72,
+    /// Treasury withdrawal proposal not found.
+    TreasuryProposalNotFound = 73,
+    /// Treasury withdrawal proposal has already been executed.
+    TreasuryProposalAlreadyExecuted = 74,
+    /// Treasury withdrawal proposal has been cancelled.
+    TreasuryProposalCancelled = 75,
+    /// Treasury withdrawal proposal timelock has not expired.
+    TreasuryTimelockNotExpired = 76,
+    /// Treasury withdrawal proposal has expired.
+    TreasuryProposalExpired = 77,
+    /// Signer has already approved this treasury withdrawal proposal.
+    TreasuryAlreadyApproved = 78,
+    /// Insufficient approvals to execute treasury withdrawal.
+    TreasuryInsufficientApprovals = 79,
+    /// Invalid treasury multisig threshold (zero or exceeds signer count).
+    InvalidTreasuryThreshold = 80,
+    /// Treasury withdrawal amount exceeds token balance.
+    InsufficientTokenTreasuryBalance = 81,
     /// Issue #836: Subscription is still in its free trial; no charge yet.
-    TrialActive = 72,
+    TrialActive = 82,
     /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
-    TrialTooLong = 73,
+    TrialTooLong = 83,
     /// Payment link does not exist or belongs to a different merchant.
-    InvalidPaymentLink = 74,
+    InvalidPaymentLink = 84,
     /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
-    KycLimitExceeded = 75,
+    KycLimitExceeded = 85,
 }
 
 /// Issue #841: Muxed account (M-address) wrapping a G-address and 64-bit sub-account ID.
@@ -626,6 +648,43 @@ pub struct TreasuryWithdrawal {
     pub destination: Address,
     pub admin: Address,
     pub withdrawn_at: u64,
+}
+
+/// Treasury withdrawal proposal with M-of-N multi-sig and timelock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryWithdrawalProposal {
+    pub proposal_id: String,
+    pub token_address: Address,
+    pub destination: Address,
+    pub amount: i128,
+    pub proposer: Address,
+    pub approvals: Vec<Address>,
+    pub created_at: u64,
+    pub earliest_execution_time: u64,
+    pub executed: bool,
+    pub cancelled: bool,
+}
+
+/// Treasury multisig configuration for withdrawal governance.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryMultisigConfig {
+    pub required_approvals: u32,
+    pub admin_signers: Vec<Address>,
+    pub min_delay_secs: u64,
+    pub max_delay_secs: u64,
+}
+
+/// Treasury withdrawal proposal status for querying.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TreasuryProposalStatus {
+    Pending,
+    Approved,
+    Executed,
+    Cancelled,
+    Expired,
 }
 
 /// Issue #666: Record of a single settlement's platform-fee collection,

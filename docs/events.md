@@ -545,6 +545,40 @@ Emitted when an invoice is marked overdue.
 
 ---
 
+## SESSION
+
+Session-key events use a 3-tuple topic `(SESSION, ACTION, account)`, matching `register_session_key` and `revoke_session_key`. `account` is the parent account that delegated the key.
+
+### SESSION / POLICY_REGISTERED
+
+Emitted by `register_session_key_with_policy` after the key is stored.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_key` | `Address` | Delegated signer |
+| `policy` | `SessionPolicy` | Spend caps and contract/function allowlists |
+
+### SESSION / POLICY_VIOLATION
+
+Emitted by `execute_with_session` when a configured policy rejects the call. The storage write for that call is not applied.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_key` | `Address` | Delegated signer |
+| `reason` | `Symbol` | `max_per_tx`, `window_budget`, `contract`, or `function` |
+
+### SESSION / WINDOW_ROLLOVER
+
+Emitted by `execute_with_session` when an expired spend window is reset on an accepted call.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_key` | `Address` | Delegated signer |
+| `previous_start` | `u64` | Timestamp when the expired window opened |
+| `window_start` | `u64` | Timestamp when the new window opened |
+
+---
+
 ## META_TX
 
 Sponsored meta-transactions. Emitted by `execute_meta_transaction`.

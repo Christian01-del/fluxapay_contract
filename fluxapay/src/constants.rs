@@ -125,6 +125,18 @@ pub const UPGRADE_TIMELOCK_LEDGERS: u32 = 34_560;
 /// Maximum number of withdrawal records retained in `TreasuryWithdrawalHistory`.
 pub const TREASURY_WITHDRAWAL_HISTORY_CAP: u32 = 100;
 
+/// Treasury multisig default timelock: 24 hours.
+pub const DEFAULT_TREASURY_TIMELOCK_SECS: u64 = 24 * 60 * 60;
+/// Treasury multisig maximum timelock: 48 hours.
+pub const MAX_TREASURY_TIMELOCK_SECS: u64 = 48 * 60 * 60;
+/// Treasury multisig minimum timelock: 1 hour.
+pub const MIN_TREASURY_TIMELOCK_SECS: u64 = 60 * 60;
+
+/// Default required approvals for treasury multisig (3 of 5).
+pub const DEFAULT_TREASURY_REQUIRED_APPROVALS: u32 = 3;
+/// Default maximum signers for treasury multisig.
+pub const MAX_TREASURY_SIGNERS: u32 = 10;
+
 /// Issue #628: Maximum number of entries `get_top_merchants` will return,
 /// keeping the ledger-read budget bounded regardless of the caller's `limit`.
 pub const TOP_MERCHANTS_MAX_LIMIT: u32 = 100;

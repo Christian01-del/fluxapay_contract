@@ -518,14 +518,36 @@ pub enum Error {
     InvalidEvidenceCid = 69,
     /// Issue #841: Incoming muxed sub-account ID does not match the expected muxed_payer.
     MuxedAccountMismatch = 70,
+    /// Treasury multisig configuration not set or invalid.
+    TreasuryMultisigNotConfigured = 71,
+    /// Caller is not an authorized treasury multisig signer.
+    NotAuthorizedTreasurySigner = 72,
+    /// Treasury withdrawal proposal not found.
+    TreasuryProposalNotFound = 73,
+    /// Treasury withdrawal proposal has already been executed.
+    TreasuryProposalAlreadyExecuted = 74,
+    /// Treasury withdrawal proposal has been cancelled.
+    TreasuryProposalCancelled = 75,
+    /// Treasury withdrawal proposal timelock has not expired.
+    TreasuryTimelockNotExpired = 76,
+    /// Treasury withdrawal proposal has expired.
+    TreasuryProposalExpired = 77,
+    /// Signer has already approved this treasury withdrawal proposal.
+    TreasuryAlreadyApproved = 78,
+    /// Insufficient approvals to execute treasury withdrawal.
+    TreasuryInsufficientApprovals = 79,
+    /// Invalid treasury multisig threshold (zero or exceeds signer count).
+    InvalidTreasuryThreshold = 80,
+    /// Treasury withdrawal amount exceeds token balance.
+    InsufficientTokenTreasuryBalance = 81,
     /// Issue #836: Subscription is still in its free trial; no charge yet.
-    TrialActive = 72,
+    TrialActive = 82,
     /// Issue #836: Requested trial_days exceeds the maximum of 90 days.
-    TrialTooLong = 73,
+    TrialTooLong = 83,
     /// Payment link does not exist or belongs to a different merchant.
-    InvalidPaymentLink = 74,
+    InvalidPaymentLink = 84,
     /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
-    KycLimitExceeded = 75,
+    KycLimitExceeded = 85,
 }
 
 #[contracttype]
@@ -2165,10 +2187,27 @@ impl RefundManager {
     }
 
     pub fn get_treasury_balance(env: Env) -> i128 {
+        let usdc_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UsdcToken)
+            .ok_or(Error::Unauthorized)
+            .unwrap_or_else(|_| Address::from_str(&env, ZERO_CONTRACT_STRKEY));
+        Self::get_token_treasury_balance(env, usdc_token)
+    }
+
+    /// Get treasury balance for a specific token.
+    fn get_token_treasury_balance(env: Env, token_address: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&DataKey::TreasuryBalance)
-            .unwrap_or(0)
+            .get(&DataKey::TokenTreasuryBalance(token_address))
+            .unwrap_or_else(|| {
+                // Fallback to global TreasuryBalance for backward compatibility
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::TreasuryBalance)
+                    .unwrap_or(0)
+            })
     }
 
     /// Append a withdrawal record, retaining only the newest
@@ -3105,7 +3144,10 @@ impl RefundManager {
         {
             let registry_client =
                 crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
-            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+            let _ = registry_client.try_increment_merchant_dispute_count(
+                &env.current_contract_address(),
+                &merchant_id,
+            );
         }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
@@ -3141,6 +3183,7 @@ impl RefundManager {
                     );
                     let thirty_days_secs: u64 = 30 * 24 * 60 * 60;
                     let _ = registry_client.try_suspend_merchant_by_system(
+                        &env.current_contract_address(),
                         &merchant_id,
                         &suspension_reason,
                         &thirty_days_secs,
@@ -4036,6 +4079,10 @@ impl RefundManager {
     ) -> Result<(), Error> {
         arbitrator.require_auth();
 
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
+
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -4087,6 +4134,10 @@ impl RefundManager {
         choice: VoteChoice,
     ) -> Result<(), Error> {
         arbitrator.require_auth();
+
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
 
         // Dispute must be open / under review
         let dispute = Self::get_dispute_internal(&env, &dispute_id)?;
@@ -4429,6 +4480,24 @@ impl RefundManager {
         for id in dispute_ids.iter() {
             if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
                 disputes.push_back(dispute);
+            }
+        }
+        Ok(disputes)
+    }
+
+    /// Issue #575: Get disputes for a payment filtered by dispute status.
+    pub fn get_payment_disputes_by_status(
+        env: Env,
+        payment_id: String,
+        status: DisputeStatus,
+    ) -> Result<Vec<Dispute>, Error> {
+        let dispute_ids = Self::get_payment_disputes_internal(&env, &payment_id);
+        let mut disputes = vec![&env];
+        for id in dispute_ids.iter() {
+            if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
+                if dispute.status == status {
+                    disputes.push_back(dispute);
+                }
             }
         }
         Ok(disputes)
@@ -6379,11 +6448,29 @@ impl PaymentProcessor {
     }
 
     /// Return the accumulated treasury balance collected via settlement fees.
+    /// Uses the default USDC token for backward compatibility.
     pub fn get_treasury_balance(env: Env) -> i128 {
+        let usdc_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UsdcToken)
+            .ok_or(Error::Unauthorized)
+            .unwrap_or_else(|_| Address::from_str(&env, ZERO_CONTRACT_STRKEY));
+        Self::get_token_treasury_balance(env, usdc_token)
+    }
+
+    /// Get treasury balance for a specific token.
+    fn get_token_treasury_balance(env: Env, token_address: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&DataKey::TreasuryBalance)
-            .unwrap_or(0)
+            .get(&DataKey::TokenTreasuryBalance(token_address))
+            .unwrap_or_else(|| {
+                // Fallback to global TreasuryBalance for backward compatibility
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::TreasuryBalance)
+                    .unwrap_or(0)
+            })
     }
 
     fn record_treasury_withdrawal(env: &Env, record: TreasuryWithdrawal) {
@@ -10114,7 +10201,11 @@ impl PaymentProcessor {
         registry_client.clear_pending_settlement(&merchant_id);
 
         // Update last_settlement_at on the merchant record.
-        registry_client.set_last_settlement_at(&merchant_id, &now);
+        registry_client.set_last_settlement_at(
+            &env.current_contract_address(),
+            &merchant_id,
+            &now,
+        );
 
         // Emit MERCHANT/SETTLEMENT_TRIGGERED event.
         env.events().publish(
@@ -12296,61 +12387,33 @@ pub use payment_link::{
     PaymentLinkManagerClient,
 };
 
-#[cfg(test)]
-mod arbitrage_test;
-#[cfg(test)]
-mod auth_test;
-#[cfg(test)]
-mod batch_payment_test;
-#[cfg(test)]
-mod dex_router_test;
-#[cfg(test)]
-mod dispute_test;
-#[cfg(test)]
-mod escalate_disputes_test;
-#[cfg(test)]
-mod feature_tests;
-#[cfg(test)]
-mod fx_oracle_test;
-#[cfg(test)]
-mod integration_test;
-#[cfg(test)]
-mod invoice_test;
-#[cfg(test)]
-mod memo_test;
-#[cfg(test)]
-mod merchant_auth_test;
-#[cfg(test)]
-mod merchant_ranking_test;
-#[cfg(test)]
-mod merchant_registry_test;
-#[cfg(test)]
-mod meta_transaction_test;
-#[cfg(test)]
-mod mock_dex_router;
-#[cfg(test)]
-mod muxed_payer_test;
-#[cfg(test)]
-mod oracle_sanitization_test;
-#[cfg(test)]
-mod partial_overpaid_test;
-#[cfg(test)]
-mod pause_test;
-#[cfg(test)]
-mod payment_link_test;
-#[cfg(test)]
-mod payment_metadata_test;
-#[cfg(test)]
-mod proptests;
-#[cfg(test)]
-mod router_allowlist_test;
-#[cfg(test)]
-mod settlement_test;
-#[cfg(test)]
-mod stream_test;
-#[cfg(test)]
-mod subscription_test;
-#[cfg(test)]
-mod swap_test;
-#[cfg(test)]
-mod test;
+#[cfg(test)] mod test;
+#[cfg(test)] mod stream_test;
+#[cfg(test)] mod subscription_test;
+#[cfg(test)] mod arbitrage_test;
+#[cfg(test)] mod auth_test;
+#[cfg(test)] mod batch_payment_test;
+#[cfg(test)] mod dex_router_test;
+#[cfg(test)] mod dispute_test;
+#[cfg(test)] mod escalate_disputes_test;
+#[cfg(test)] mod feature_tests;
+#[cfg(test)] mod fx_oracle_test;
+#[cfg(test)] mod integration_test;
+#[cfg(test)] mod memo_test;
+#[cfg(test)] mod merchant_ranking_test;
+#[cfg(test)] mod merchant_registry_test;
+#[cfg(test)] mod mock_dex_router;
+#[cfg(test)] mod muxed_payer_test;
+#[cfg(test)] mod oracle_sanitization_test;
+#[cfg(test)] mod partial_overpaid_test;
+#[cfg(test)] mod pause_test;
+#[cfg(test)] mod payment_link_test;
+#[cfg(test)] mod payment_metadata_test;
+#[cfg(test)] mod proptests;
+#[cfg(test)] mod router_allowlist_test;
+#[cfg(test)] mod settlement_test;
+#[cfg(test)] mod swap_test;
+#[cfg(test)] mod invoice_test;
+#[cfg(test)] mod merchant_auth_test;
+#[cfg(test)] mod account_abstraction_test;
+#[cfg(test)] mod meta_transaction_test;
