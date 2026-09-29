@@ -491,6 +491,28 @@ pub enum Error {
     InvalidPaymentLink = 70,
     /// Issue #777: Payment amount or monthly volume exceeds the merchant's KYC tier limit.
     KycLimitExceeded = 71,
+    /// Treasury multisig configuration not set or invalid.
+    TreasuryMultisigNotConfigured = 72,
+    /// Caller is not an authorized treasury multisig signer.
+    NotAuthorizedTreasurySigner = 73,
+    /// Treasury withdrawal proposal not found.
+    TreasuryProposalNotFound = 74,
+    /// Treasury withdrawal proposal has already been executed.
+    TreasuryProposalAlreadyExecuted = 75,
+    /// Treasury withdrawal proposal has been cancelled.
+    TreasuryProposalCancelled = 76,
+    /// Treasury withdrawal proposal timelock has not expired.
+    TreasuryTimelockNotExpired = 77,
+    /// Treasury withdrawal proposal has expired.
+    TreasuryProposalExpired = 78,
+    /// Signer has already approved this treasury withdrawal proposal.
+    TreasuryAlreadyApproved = 79,
+    /// Insufficient approvals to execute treasury withdrawal.
+    TreasuryInsufficientApprovals = 80,
+    /// Invalid treasury multisig threshold (zero or exceeds signer count).
+    InvalidTreasuryThreshold = 81,
+    /// Treasury withdrawal amount exceeds token balance.
+    InsufficientTokenTreasuryBalance = 82,
 }
 
 #[contracttype]
@@ -2288,10 +2310,27 @@ impl RefundManager {
     }
 
     pub fn get_treasury_balance(env: Env) -> i128 {
+        let usdc_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UsdcToken)
+            .ok_or(Error::Unauthorized)
+            .unwrap_or_else(|_| Address::from_str(&env, ZERO_CONTRACT_STRKEY));
+        Self::get_token_treasury_balance(env, usdc_token)
+    }
+
+    /// Get treasury balance for a specific token.
+    fn get_token_treasury_balance(env: Env, token_address: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&DataKey::TreasuryBalance)
-            .unwrap_or(0)
+            .get(&DataKey::TokenTreasuryBalance(token_address))
+            .unwrap_or_else(|| {
+                // Fallback to global TreasuryBalance for backward compatibility
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::TreasuryBalance)
+                    .unwrap_or(0)
+            })
     }
 
     /// Append a withdrawal record, retaining only the newest
@@ -3213,7 +3252,10 @@ pub use merchant_registry::{
         {
             let registry_client =
                 crate::merchant_registry::MerchantRegistryClient::new(env, &registry_address);
-            let _ = registry_client.try_increment_merchant_dispute_count(&merchant_id);
+            let _ = registry_client.try_increment_merchant_dispute_count(
+                &env.current_contract_address(),
+                &merchant_id,
+            );
         }
 
         // Check dispute rate: if >= 10% of payments have disputes, auto-suspend via registry
@@ -3249,6 +3291,7 @@ pub use merchant_registry::{
                     );
                     let thirty_days_secs: u64 = 30 * 24 * 60 * 60;
                     let _ = registry_client.try_suspend_merchant_by_system(
+                        &env.current_contract_address(),
                         &merchant_id,
                         &suspension_reason,
                         &thirty_days_secs,
@@ -4144,6 +4187,10 @@ pub use merchant_registry::{
     ) -> Result<(), Error> {
         arbitrator.require_auth();
 
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
+
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -4195,6 +4242,10 @@ pub use merchant_registry::{
         choice: VoteChoice,
     ) -> Result<(), Error> {
         arbitrator.require_auth();
+
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
 
         // Dispute must be open / under review
         let dispute = Self::get_dispute_internal(&env, &dispute_id)?;
@@ -4537,6 +4588,24 @@ pub use merchant_registry::{
         for id in dispute_ids.iter() {
             if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
                 disputes.push_back(dispute);
+            }
+        }
+        Ok(disputes)
+    }
+
+    /// Issue #575: Get disputes for a payment filtered by dispute status.
+    pub fn get_payment_disputes_by_status(
+        env: Env,
+        payment_id: String,
+        status: DisputeStatus,
+    ) -> Result<Vec<Dispute>, Error> {
+        let dispute_ids = Self::get_payment_disputes_internal(&env, &payment_id);
+        let mut disputes = vec![&env];
+        for id in dispute_ids.iter() {
+            if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
+                if dispute.status == status {
+                    disputes.push_back(dispute);
+                }
             }
         }
         Ok(disputes)
@@ -6482,11 +6551,29 @@ impl PaymentProcessor {
     }
 
     /// Return the accumulated treasury balance collected via settlement fees.
+    /// Uses the default USDC token for backward compatibility.
     pub fn get_treasury_balance(env: Env) -> i128 {
+        let usdc_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UsdcToken)
+            .ok_or(Error::Unauthorized)
+            .unwrap_or_else(|_| Address::from_str(&env, ZERO_CONTRACT_STRKEY));
+        Self::get_token_treasury_balance(env, usdc_token)
+    }
+
+    /// Get treasury balance for a specific token.
+    fn get_token_treasury_balance(env: Env, token_address: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&DataKey::TreasuryBalance)
-            .unwrap_or(0)
+            .get(&DataKey::TokenTreasuryBalance(token_address))
+            .unwrap_or_else(|| {
+                // Fallback to global TreasuryBalance for backward compatibility
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::TreasuryBalance)
+                    .unwrap_or(0)
+            })
     }
 
     fn record_treasury_withdrawal(env: &Env, record: TreasuryWithdrawal) {
@@ -10198,7 +10285,11 @@ impl PaymentProcessor {
         registry_client.clear_pending_settlement(&merchant_id);
 
         // Update last_settlement_at on the merchant record.
-        registry_client.set_last_settlement_at(&merchant_id, &now);
+        registry_client.set_last_settlement_at(
+            &env.current_contract_address(),
+            &merchant_id,
+            &now,
+        );
 
         // Emit MERCHANT/SETTLEMENT_TRIGGERED event.
         env.events().publish(

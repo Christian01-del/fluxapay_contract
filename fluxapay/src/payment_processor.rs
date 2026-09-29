@@ -314,11 +314,29 @@ impl PaymentProcessor {
     }
 
     /// Return the accumulated treasury balance collected via settlement fees.
+    /// Uses the default USDC token for backward compatibility.
     pub fn get_treasury_balance(env: Env) -> i128 {
+        let usdc_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UsdcToken)
+            .ok_or(Error::Unauthorized)
+            .unwrap_or_else(|_| Address::from_str(&env, ZERO_CONTRACT_STRKEY));
+        Self::get_token_treasury_balance(env, usdc_token)
+    }
+
+    /// Get treasury balance for a specific token.
+    fn get_token_treasury_balance(env: Env, token_address: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&DataKey::TreasuryBalance)
-            .unwrap_or(0)
+            .get(&DataKey::TokenTreasuryBalance(token_address))
+            .unwrap_or_else(|| {
+                // Fallback to global TreasuryBalance for backward compatibility
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::TreasuryBalance)
+                    .unwrap_or(0)
+            })
     }
 
     fn record_treasury_withdrawal(env: &Env, record: TreasuryWithdrawal) {
@@ -3653,14 +3671,19 @@ impl PaymentProcessor {
                 // get_platform_fee_report.
                 Self::record_fee_collection(&env, settlement_fee, treasury_total, dev_amount);
             } else {
-                // No FeeSplitConfig — accumulate entire fee in TreasuryBalance (legacy path).
-                let current_treasury: i128 = env
-                    .storage()
-                    .persistent()
-                    .get::<DataKey, i128>(&DataKey::TreasuryBalance)
-                    .unwrap_or(0);
+                // No FeeSplitConfig — accumulate entire fee in TokenTreasuryBalance (legacy path).
+                let settlement_token_for_treasury = settlement_token.unwrap_or_else(|| {
+                    env.storage()
+                        .persistent()
+                        .get(&DataKey::UsdcToken)
+                        .unwrap_or_else(|| env.current_contract_address())
+                });
+                let current_treasury: i128 = Self::get_token_treasury_balance(
+                    env.clone(),
+                    settlement_token_for_treasury.clone(),
+                );
                 env.storage().persistent().set(
-                    &DataKey::TreasuryBalance,
+                    &DataKey::TokenTreasuryBalance(settlement_token_for_treasury),
                     &current_treasury.saturating_add(settlement_fee),
                 );
 
@@ -3768,7 +3791,7 @@ impl PaymentProcessor {
                 }
 
                 // Platform fee: custom fee_recipient receives a transfer; otherwise
-                // credit DataKey::TreasuryBalance (unified treasury accounting).
+                // credit TokenTreasuryBalance (unified treasury accounting).
                 let fee_recipient: Address = if let Some(custom_recipient) =
                     &fee_config.fee_recipient
                 {
@@ -3782,13 +3805,18 @@ impl PaymentProcessor {
                     custom_recipient.clone()
                 } else {
                     if actual_fee > 0 {
-                        let current_treasury: i128 = env
-                            .storage()
-                            .persistent()
-                            .get::<DataKey, i128>(&DataKey::TreasuryBalance)
-                            .unwrap_or(0);
+                        let settlement_token_for_treasury = settlement_token.unwrap_or_else(|| {
+                            env.storage()
+                                .persistent()
+                                .get(&DataKey::UsdcToken)
+                                .unwrap_or_else(|| env.current_contract_address())
+                        });
+                        let current_treasury: i128 = Self::get_token_treasury_balance(
+                            env.clone(),
+                            settlement_token_for_treasury.clone(),
+                        );
                         env.storage().persistent().set(
-                            &DataKey::TreasuryBalance,
+                            &DataKey::TokenTreasuryBalance(settlement_token_for_treasury),
                             &current_treasury.saturating_add(actual_fee),
                         );
                     }
@@ -3923,17 +3951,22 @@ impl PaymentProcessor {
         }
 
         // Platform fee: when the registry returns the contract itself as recipient
-        // (no custom fee_recipient), credit TreasuryBalance. Otherwise transfer out.
+        // (no custom fee_recipient), credit TokenTreasuryBalance. Otherwise transfer out.
         if platform_fee > 0 {
             let contract_addr = env.current_contract_address();
             if fee_recipient == contract_addr {
-                let current_treasury: i128 = env
-                    .storage()
-                    .persistent()
-                    .get::<DataKey, i128>(&DataKey::TreasuryBalance)
-                    .unwrap_or(0);
+                let settlement_token_for_treasury = settlement_token.unwrap_or_else(|| {
+                    env.storage()
+                        .persistent()
+                        .get(&DataKey::UsdcToken)
+                        .unwrap_or_else(|| env.current_contract_address())
+                });
+                let current_treasury: i128 = Self::get_token_treasury_balance(
+                    env.clone(),
+                    settlement_token_for_treasury.clone(),
+                );
                 env.storage().persistent().set(
-                    &DataKey::TreasuryBalance,
+                    &DataKey::TokenTreasuryBalance(settlement_token_for_treasury),
                     &current_treasury.saturating_add(platform_fee),
                 );
             } else if let Some(ref settlement_token) = settlement_token {
@@ -4103,7 +4136,11 @@ impl PaymentProcessor {
         registry_client.clear_pending_settlement(&merchant_id);
 
         // Update last_settlement_at on the merchant record.
-        registry_client.set_last_settlement_at(&merchant_id, &now);
+        registry_client.set_last_settlement_at(
+            &env.current_contract_address(),
+            &merchant_id,
+            &now,
+        );
 
         // Emit MERCHANT/SETTLEMENT_TRIGGERED event.
         env.events().publish(
