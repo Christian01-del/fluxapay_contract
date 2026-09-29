@@ -712,6 +712,56 @@ pub struct TreasuryWithdrawn {
     pub recipient: Address,
 }
 
+/// Emitted when a treasury withdrawal proposal is created.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct TreasuryWithdrawalProposed {
+    pub proposal_id: String,
+    pub token_address: Address,
+    pub destination: Address,
+    pub amount: i128,
+    pub proposer: Address,
+    pub earliest_execution_time: u64,
+}
+
+/// Emitted when a treasury withdrawal proposal receives an approval.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct TreasuryWithdrawalApproved {
+    pub proposal_id: String,
+    pub approver: Address,
+    pub approvals_count: u32,
+    pub required_approvals: u32,
+}
+
+/// Emitted when a treasury withdrawal proposal is executed.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct TreasuryWithdrawalExecuted {
+    pub proposal_id: String,
+    pub token_address: Address,
+    pub destination: Address,
+    pub amount: i128,
+    pub executor: Address,
+}
+
+/// Emitted when a treasury withdrawal proposal is cancelled.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct TreasuryWithdrawalCancelled {
+    pub proposal_id: String,
+    pub canceller: Address,
+}
+
+/// Emitted when treasury multisig configuration is updated.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct TreasuryMultisigConfigured {
+    pub required_approvals: u32,
+    pub min_delay_secs: u64,
+    pub max_delay_secs: u64,
+}
+
 // ============================================================================
 // Token Events
 // ============================================================================
