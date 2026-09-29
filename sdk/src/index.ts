@@ -120,10 +120,12 @@ export interface FluxapayConfig {
    * CSV downloads. Falls back to `apiUrl` when omitted.
    */
   indexerUrl?: string;
+  /**
    * Issue #839: Base URL of the FluxaPay indexer API. Used by
    * `convertCurrency`. Falls back to `apiUrl` when unset.
    */
   indexerUrl?: string;
+  /**
    * Issue #816: Stellar secret key (S...) for the FluxaPay platform receipt
    * signing key. Required for `generateReceipt`.
    */
@@ -3206,6 +3208,16 @@ export {
   NetworkProfiles,
   type NetworkProfile,
 };
+export {
+  buildMetaTransactionPayload,
+  domainSeparator,
+  signingPreimage,
+  signingDigest,
+  signMetaTransaction,
+  META_TX_FUNCTIONS,
+  type MetaTransactionPayload,
+  type MetaTransactionTarget,
+} from "./metaTx.js";
 
 export { RefundManagerClient, type RefundManagerConfig } from "./contracts/refund-manager.js";
 export {

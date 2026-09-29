@@ -7,8 +7,8 @@ use crate::access_control::{
 use crate::utils::{self, format_id, validate_ipfs_multihash};
 use crate::*;
 use soroban_sdk::{
-    contract, contractimpl, map, token, vec, Address, BytesN, Env, Map, MuxedAddress, String, Symbol,
-    Vec,
+    contract, contractimpl, map, token, vec, Address, BytesN, Env, Map, MuxedAddress, String,
+    Symbol, Vec,
 };
 
 #[contract]
@@ -440,7 +440,7 @@ impl RefundManager {
         if !env
             .storage()
             .persistent()
-            .has(&DataKey::Payment(payment_id_to_key(env, payment_id)))
+            .has(&DataKey::Payment(payment_id_to_key(&env, &payment_id)))
         {
             let payment = PaymentCharge {
                 payment_id: payment_id.clone(),
@@ -468,12 +468,14 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: None,
                 tip_enabled: false,
                 tip_amount: None,
             };
-            env.storage()
-                .persistent()
-                .set(&DataKey::Payment(payment_id_to_key(env, payment_id)), &payment);
+            env.storage().persistent().set(
+                &DataKey::Payment(payment_id_to_key(&env, &payment_id)),
+                &payment,
+            );
             Self::bump_payment_ttl(&env, &payment_id, &payment.status);
         }
         Ok(())
@@ -615,7 +617,7 @@ impl RefundManager {
         if !env
             .storage()
             .persistent()
-            .has(&DataKey::Payment(payment_id_to_key(env, payment_id)))
+            .has(&DataKey::Payment(payment_id_to_key(&env, &payment_id)))
         {
             let payment = PaymentCharge {
                 payment_id: payment_id.clone(),
@@ -643,12 +645,14 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: None,
                 tip_enabled: false,
                 tip_amount: None,
             };
-            env.storage()
-                .persistent()
-                .set(&DataKey::Payment(payment_id_to_key(env, payment_id)), &payment);
+            env.storage().persistent().set(
+                &DataKey::Payment(payment_id_to_key(&env, &payment_id)),
+                &payment,
+            );
             Self::bump_payment_ttl(&env, &payment_id, &payment.status);
 
             // Issue #184: Track confirmed payment count per merchant for dispute rate calculation
@@ -699,10 +703,14 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: None,
+                tip_enabled: false,
+                tip_amount: None,
             };
-            env.storage()
-                .persistent()
-                .set(&DataKey::Payment(payment_id_to_key(&env, &payment_id)), &payment);
+            env.storage().persistent().set(
+                &DataKey::Payment(payment_id_to_key(&env, &payment_id)),
+                &payment,
+            );
             Self::bump_payment_ttl(&env, &payment_id, &payment.status);
 
             let count_key = DataKey::MerchantPaymentCount(merchant_id.clone());
@@ -861,11 +869,12 @@ impl RefundManager {
 
         // Validate refund amount does not exceed original payment amount
         // First try to get payment from local storage
-        let payment: PaymentCharge = if let Some(local_payment) =
-            env.storage()
-                .persistent()
-                .get::<DataKey, PaymentCharge>(&DataKey::Payment(payment_id_to_key(env, payment_id)))
-        {
+        let payment: PaymentCharge = if let Some(local_payment) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PaymentCharge>(
+            &DataKey::Payment(payment_id_to_key(env, &payment_id)),
+        ) {
             local_payment
         } else {
             return Err(Error::PaymentNotFound);
@@ -874,7 +883,10 @@ impl RefundManager {
         Self::require_not_blacklisted(env, &requester)?;
 
         // Issue #770: Verify requester is the original payment payer or merchant
-        let is_payer = payment.payer_address.as_ref().map_or(false, |p| *p == requester);
+        let is_payer = payment
+            .payer_address
+            .as_ref()
+            .map_or(false, |p| *p == requester);
         let mut is_merchant = requester == payment.merchant_id;
 
         if !is_payer && !is_merchant {
@@ -1184,7 +1196,10 @@ impl RefundManager {
         let payment: PaymentCharge = env
             .storage()
             .persistent()
-            .get::<DataKey, PaymentCharge>(&DataKey::Payment(payment_id_to_key(env, &refund.payment_id)))
+            .get::<DataKey, PaymentCharge>(&DataKey::Payment(payment_id_to_key(
+                env,
+                &refund.payment_id,
+            )))
             .ok_or(Error::PaymentNotFound)?;
 
         // Issue #167: Query merchant's KYC tier and apply tiered refund fee
@@ -1812,7 +1827,7 @@ impl RefundManager {
         let payment: PaymentCharge = env
             .storage()
             .persistent()
-            .get(&DataKey::Payment(payment_id_to_key(env, payment_id)))
+            .get(&DataKey::Payment(payment_id_to_key(env, &payment_id)))
             .ok_or(Error::PaymentNotFound)?;
 
         // Ensure payment is confirmed
@@ -2903,18 +2918,17 @@ impl RefundManager {
         Self::bump_ttl(&env, &stake_key, LONG_LIVE_TTL);
 
         let tally_key = DataKey::DisputeVoteTally(dispute_id.clone());
-        let mut tally: VoteTally = env
-            .storage()
-            .persistent()
-            .get(&tally_key)
-            .unwrap_or(VoteTally {
-                favour_weight: 0,
-                against_weight: 0,
-                vote_count: 0,
-                total_registered_weight: 0,
-            });
-        tally.total_registered_weight =
-            tally.total_registered_weight.saturating_add(vote_weight);
+        let mut tally: VoteTally =
+            env.storage()
+                .persistent()
+                .get(&tally_key)
+                .unwrap_or(VoteTally {
+                    favour_weight: 0,
+                    against_weight: 0,
+                    vote_count: 0,
+                    total_registered_weight: 0,
+                });
+        tally.total_registered_weight = tally.total_registered_weight.saturating_add(vote_weight);
         env.storage().persistent().set(&tally_key, &tally);
         Self::bump_ttl(&env, &tally_key, LONG_LIVE_TTL);
 
@@ -2972,16 +2986,16 @@ impl RefundManager {
         Self::bump_ttl(&env, &vote_key, LONG_LIVE_TTL);
 
         let tally_key = DataKey::DisputeVoteTally(dispute_id.clone());
-        let mut tally: VoteTally = env
-            .storage()
-            .persistent()
-            .get(&tally_key)
-            .unwrap_or(VoteTally {
-                favour_weight: 0,
-                against_weight: 0,
-                vote_count: 0,
-                total_registered_weight: 0,
-            });
+        let mut tally: VoteTally =
+            env.storage()
+                .persistent()
+                .get(&tally_key)
+                .unwrap_or(VoteTally {
+                    favour_weight: 0,
+                    against_weight: 0,
+                    vote_count: 0,
+                    total_registered_weight: 0,
+                });
 
         match choice {
             VoteChoice::Favour => {
@@ -3045,10 +3059,10 @@ impl RefundManager {
             return Err(Error::ArbitrationVotingThresholdNotMet);
         }
 
-        let favour_quorum = tally.favour_weight.saturating_mul(10_000)
-            > total.saturating_mul(quorum_bps as i128);
-        let against_quorum = tally.against_weight.saturating_mul(10_000)
-            > total.saturating_mul(quorum_bps as i128);
+        let favour_quorum =
+            tally.favour_weight.saturating_mul(10_000) > total.saturating_mul(quorum_bps as i128);
+        let against_quorum =
+            tally.against_weight.saturating_mul(10_000) > total.saturating_mul(quorum_bps as i128);
 
         let (favour_wins, majority) = if favour_quorum && !against_quorum {
             (true, VoteChoice::Favour)
@@ -3227,7 +3241,7 @@ impl RefundManager {
                 .unwrap_or(ArbitratorVoteTally {
                     approve_count: 0,
                     reject_count: 0,
-        });
+                });
 
         match choice {
             ArbitratorVoteChoice::Approve => {
@@ -3608,9 +3622,9 @@ impl RefundManager {
 
         let now = env.ledger().timestamp();
         // Issue #836: delay first charge until trial ends when plan has trial_days.
-        let trial_ends_at = plan.trial_days.map(|days| {
-            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
-        });
+        let trial_ends_at = plan
+            .trial_days
+            .map(|days| now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS)));
         let next_payment_at = match trial_ends_at {
             Some(ends) => ends,
             None => now.saturating_add(plan.interval_secs),
@@ -3706,9 +3720,9 @@ impl RefundManager {
 
         let now = env.ledger().timestamp();
         // Issue #836: delay first charge until trial ends when plan has trial_days.
-        let trial_ends_at = plan.trial_days.map(|days| {
-            now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS))
-        });
+        let trial_ends_at = plan
+            .trial_days
+            .map(|days| now.saturating_add((days as u64).saturating_mul(TRIAL_DAY_SECS)));
         let next_payment_at = match trial_ends_at {
             Some(ends) => ends,
             None => now.saturating_add(plan.interval_secs),
@@ -4380,13 +4394,15 @@ impl RefundManager {
             retry_of_payment_id: None,
             payer_muxed_id: None,
             payment_link_id: None,
+            allow_partial: None,
             tip_enabled: false,
             tip_amount: None,
         };
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Payment(payment_id_to_key(env, &payment_id)), &payment);
+        env.storage().persistent().set(
+            &DataKey::Payment(payment_id_to_key(env, &payment_id)),
+            &payment,
+        );
         Self::bump_payment_ttl(env, &payment_id, &payment.status);
 
         let counter = Self::get_next_refund_id(env);
@@ -4741,13 +4757,15 @@ impl RefundManager {
                 retry_of_payment_id: None,
                 payer_muxed_id: None,
                 payment_link_id: None,
+                allow_partial: None,
                 tip_enabled: false,
                 tip_amount: None,
             };
 
-            env.storage()
-                .persistent()
-                .set(&DataKey::Payment(payment_id_to_key(&env, &payment_id)), &payment);
+            env.storage().persistent().set(
+                &DataKey::Payment(payment_id_to_key(&env, &payment_id)),
+                &payment,
+            );
             Self::bump_payment_ttl(&env, &payment_id, &payment.status);
 
             subscription.last_payment_at = Some(now);
@@ -4879,7 +4897,8 @@ impl RefundManager {
             | PaymentStatus::Expired
             | PaymentStatus::Failed
             | PaymentStatus::PartiallyPaid
-            | PaymentStatus::Overpaid => LONG_LIVE_TTL,
+            | PaymentStatus::Overpaid
+            | PaymentStatus::Disputed => LONG_LIVE_TTL,
         }
     }
 
@@ -4923,16 +4942,16 @@ impl RefundManager {
         admin: Address,
         new_wasm_hash: BytesN<32>,
     ) -> Result<(), Error> {
-        PaymentProcessor::propose_upgrade(env, admin, new_wasm_hash)
+        crate::payment_processor::PaymentProcessor::propose_upgrade(env, admin, new_wasm_hash)
     }
 
     /// Issue #846: Execute a pending upgrade after the timelock.
     pub fn execute_upgrade(env: Env, admin: Address) -> Result<(), Error> {
-        PaymentProcessor::execute_upgrade(env, admin)
+        crate::payment_processor::PaymentProcessor::execute_upgrade(env, admin)
     }
 
     /// Issue #846: Cancel a pending upgrade proposal.
     pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), Error> {
-        PaymentProcessor::cancel_upgrade(env, admin)
+        crate::payment_processor::PaymentProcessor::cancel_upgrade(env, admin)
     }
 }
