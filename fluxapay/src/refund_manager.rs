@@ -2880,6 +2880,10 @@ impl RefundManager {
     ) -> Result<(), Error> {
         arbitrator.require_auth();
 
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
+
         if amount < MIN_ARBITRATOR_STAKE {
             return Err(Error::InvalidAmount);
         }
@@ -2941,6 +2945,10 @@ impl RefundManager {
         choice: VoteChoice,
     ) -> Result<(), Error> {
         arbitrator.require_auth();
+
+        if !AccessControl::has_role(&env, &role_arbitrator(&env), &arbitrator) {
+            return Err(Error::Unauthorized);
+        }
 
         let dispute = Self::get_dispute_internal(&env, &dispute_id)?;
         if dispute.status == DisputeStatus::Resolved || dispute.status == DisputeStatus::Rejected {
@@ -3313,6 +3321,24 @@ impl RefundManager {
         for id in dispute_ids.iter() {
             if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
                 disputes.push_back(dispute);
+            }
+        }
+        Ok(disputes)
+    }
+
+    /// Issue #575: Get disputes for a payment filtered by dispute status.
+    pub fn get_payment_disputes_by_status(
+        env: Env,
+        payment_id: String,
+        status: DisputeStatus,
+    ) -> Result<Vec<Dispute>, Error> {
+        let dispute_ids = Self::get_payment_disputes_internal(&env, &payment_id);
+        let mut disputes = vec![&env];
+        for id in dispute_ids.iter() {
+            if let Ok(dispute) = Self::get_dispute_internal(&env, &id) {
+                if dispute.status == status {
+                    disputes.push_back(dispute);
+                }
             }
         }
         Ok(disputes)
