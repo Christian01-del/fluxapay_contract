@@ -12331,3 +12331,4 @@ pub use payment_link::{
 #[cfg(test)] mod swap_test;
 #[cfg(test)] mod invoice_test;
 #[cfg(test)] mod merchant_auth_test;
+#[cfg(test)] mod account_abstraction_test;
