@@ -1336,6 +1336,7 @@ fn test_open_dispute_increments_merchant_registry_dispute_count() {
     let registry_client =
         crate::merchant_registry::MerchantRegistryClient::new(&env, &registry_id);
     registry_client.initialize(&admin);
+    registry_client.set_refund_manager_address(&admin, &refund_client.address);
 
     // Wire RefundManager → MerchantRegistry for the cross-call.
     env.as_contract(&refund_client.address, || {
