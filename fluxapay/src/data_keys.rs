@@ -1,1 +1,212 @@
-Ly8hIERhdGEga2V5cyBmb3IgcGVyc2lzdGVudCBzdG9yYWdlIGluIEZsdXhhUGF5LgoKdXNlIGNyYXRlOjptZXJjaGFudF9yZWdpc3RyeTo6S3ljVGllcjsKdXNlIHNvcm9iYW5fc2RrOjp7Y29udHJhY3R0eXBlLCBBZGRyZXNzLCBCeXRlcywgQnl0ZXNOLCBFbnYsIFN0cmluZywgU3ltYm9sfTsKCi8vLyBDb252ZXJ0cyBhIHBheW1lbnQgSUQgU3RyaW5nIGludG8gYSAzMi1ieXRlIGhhc2gga2V5IGZvciBzdG9yYWdlLgovLy8gUmVkdWNlcyBzdG9yYWdlIHJlbnQgYW5kIGltcHJvdmVzIGxvb2t1cHMuCnB1YiBmbiBwYXltZW50X2lkX3RvX2tleShlbnY6ICZFbnYsIHBheW1lbnRfaWQ6ICZTdHJpbmcpIC0+IEJ5dGVzTjwzMj4gewogICAgZW52LmNyeXB0bygpLnNoYTI1NigmcGF5bWVudF9pZC50b19ieXRlcygpKQp9CgovLy8gQ29udmVydHMgYSBwYXltZW50IElEIHN0cmluZyBzbGljZSBpbnRvIGEgMzItYnl0ZSBoYXNoIGtleSBmb3Igc3RvcmFnZS4KcHViIGZuIHBheW1lbnRfaWRfc3RyX3RvX2tleShlbnY6ICZFbnYsIHBheW1lbnRfaWQ6ICZzdHIpIC0+IEJ5dGVzTjwzMj4gewogICAgZW52LmNyeXB0bygpLnNoYTI1NigmQnl0ZXM6OmZyb21fc2xpY2UoZW52LCBwYXltZW50X2lkLmFzX2J5dGVzKCkpKQp9CgojW2NvbnRyYWN0dHBlXQpwdWIgZW51bSBEYXRhS2V5IHsKICAgIFBheW1lbnQoQnl0ZXNOPDMyPiksCiAgICBQYXltZW50U3RhdHVzSGlzdG9yeShTdHJpbmcpLAogICAgTWVyY2hhbnRQYXltZW50cyhBZGRyZXNzKSwKICAgIE1lcmNoYW50UmF0ZUxpbWl0KEFkZHJlc3MpLAogICAgUmVmdW5kKFN0cmluZyksCiAgICBQYXltZW50UmVmdW5kcyhTdHJpbmcpLAogICAgUmVmdW5kQ291bnRlciwKICAgIERpc3B1dGUoU3RyaW5nKSwKICAgIFBheW1lbnREaXNwdXRlcyhTdHJpbmcpLAogICAgRGlzcHV0ZUNvdW50ZXIsCiAgICBTdHJlYW0oU3RyaW5nKSwKICAgIFRyZWFzdXJ5QmFsYW5jZSwKICAgIFVzZGNUb2tlbiwKICAgIFBhdXNlZCwKICAgIENyZWF0aW9uUGF1c2VkLAogICAgTWVyY2hhbnRSZWdpc3RyeUFkZHJlc3MsCiAgICBBbGxvd2VkVG9rZW4oQWRkcmVzcyksCiAgICBCbGFja2xpc3RlZChBZGRyZXNzKSwKICAgIE1lcmNoYW50QW1vdW50TGltaXRzKEFkZHJlc3MpLAogICAgR2xvYmFsQW1vdW50TGltaXRzLAogICAgSWRlbXBvdGVuY3lLZXkoU3RyaW5nKSwKICAgIFN1YnNjcmlwdGlvblBsYW4oU3RyaW5nKSwKICAgIFN1YnNjcmlwdGlvbihTdHJpbmcpLAogICAgUGF5ZXJTdWJzY3JpcHRpb25zKEFkZHJlc3MpLAogICAgU3Vic2NyaXB0aW9uQ291bnRlciwKICAgIFN0cmVhbUNvdW50ZXIsCiAgICAvLy8gU3RvcmVzIG9wZXJhdG9yIG5vdGVzIGtleWVkIGJ5IGRpc3B1dGVfaWQgZm9yIG9uLWNoYWluIHRyYW5zcGFyZW5jeS4KICAgIERpc3B1dGVPcGVyYXRvck5vdGUoU3RyaW5nKSwKICAgIC8vLyBTdG9yZXMgYWxsIGFyYml0cmF0b3JzIHdobyBoYXZlIHZvdGVkIG9uIGEgZGlzcHV0ZS4KICAgIERpc3B1dGVBcmJpdHJhdG9yVm90ZXMoU3RyaW5nKSwKICAgIC8vLyBMb2NrZWQgc3Rha2UgZm9yIGEgZGlzcHV0ZSBhcmJpdHJhdG9yOiAoZGlzcHV0ZV9pZCwgYXJiaXRyYXRvcikg4oaSIGFtb3VudAogICAgRGlzcHV0ZVN0YWtlKFN0cmluZywgQWRkcmVzcyksCiAgICAvLy8gVm90ZSBjYXN0IGJ5IGFuIGFyYml0cmF0b3I6IChkaXNwdXRlX2lkLCBhcmJpdHJhdG9yKSDihpIgU3Rha2VXZWlnaHRlZFZvdGUKICAgIERpc3B1dGVWb3RlKFN0cmluZywgQWRkcmVzcyksCiAgICAvLy8gVGFsbHkgb2Ygdm90ZXMgZm9yIGEgZGlzcHV0ZQogICAgRGlzcHV0ZVZvdGVUYWxseShTdHJpbmcpLAogICAgLy8vIElzc3VlICM4NDM6IEFkbWluLWNvbmZpZ3VyYWJsZSB3ZWlnaHRlZCBxdW9ydW0gaW4gYmFzaXMgcG9pbnRzLgogICAgV2VpZ2h0ZWRRdW9ydW1CcHMsCiAgICAvLy8gSXNzdWUgIzg0NjogUGVuZGluZyB0aW1lLWxvY2tlZCBXQVNNIHVwZ3JhZGUgcHJvcG9zYWwuCiAgICBQZW5kaW5nV2FzbVVwZ3JhZGUsCiAgICAvLy8gQ3Jvc3MtY29udHJhY3QgYWRkcmVzcyBvZiB0aGUgY29uZmlndXJlZCBGWCBvcmFjbGUgKElzc3VlICMzMDQpLgogICAgRnhPcmFjbGVBZGRyZXNzLAogICAgLy8vIFdoZXRoZXIgYHByb2Nlc3NfcmVmdW5kYCByZXF1aXJlcyBhIGByZWNlaXB0X2hhc2hgIG9uIHJlZnVuZHMgKElzc3VlICMxNzYpLgogICAgUmVxdWlyZVJlY2VpcHRIYXNoLAogICAgLy8vIENyb3NzLWNvbnRyYWN0IGFkZHJlc3Mgb2YgdGhlIGNvbmZpZ3VyZWQgREVYIHJvdXRlciAo,SXNzdWUgIzE3MykuCiAgICBEZXhSb3V0ZXJBZGRyZXNzLAogICAgLy8vIENvbmZpZ3VyYWJsZSByZWZ1bmQgZXhwaXJ5IHdpbmRvdyBpbiBzZWNvbmRzIChJc3N1ZSAjMTcwKS4KICAgIFJlZnVuZEV4cGlyeVNlY3MsCiAgICAvLy8gVm90ZSBjYXN0IGJ5IGFuIGFyYml0cmF0b3IgdW5kZXIgdGhlIHNpbXBsZSBBUkJJVFJBVE9SLXJvbGUgdm90aW5nCiAgICAvLy8gZmxvdzogKGRpc3B1dGVfaWQsIGFyYml0cmF0b3IpIOKGkiBBcmJpdHJhdG9yVm90ZUNob2ljZS4KICAgIEFyYml0cmF0b3JWb3RlKFN0cmluZywgQWRkcmVzcyksCiAgICAvLy8gVGFsbHkgb2YgQVJCSVRSQVRPUi1yb2xlIHZvdGVzIGZvciBhIGRpc3B1dGUuCiAgICBBcmJpdHJhdG9yVm90ZVRhbGx5KFN0cmluZyksCiAgICAvLy8gSXNzdWUgIzE2ODogRmVlIHNwbGl0IGNvbmZpZ3VyYXRpb24gKHRyZWFzdXJ5X2JwcywgZGV2ZWxvcGVyX2JwcywgdHJlYXN1cnlfYWRkciwgZGV2ZWxvcGVyX2FkZHIpCiAgICBGZWVTcGxpdENvbmZpZywKICAgIC8vLyBNb250aGx5IHZvbHVtZSB0cmFja2VyOiAobWVyY2hhbnRfaWQsIG1vbnRoX2Vwb2NoKSDihpIgaTEyOCBjdW11bGF0aXZlIGFtb3VudAogICAgTWVyY2hhbnRNb250aGx5Vm9sdW1lKEFkZHJlc3MsIHUzMiksCiAgICAvLy8gQ3VtdWxhdGl2ZSBhbGwtdGltZSBwYXltZW50IHZvbHVtZSBwZXIgbWVyY2hhbnQgZm9yIEtZQyB0aWVyIGF1dG8tdXBncmFkZXMgKGlzc3VlICMyMDcpLgogICAgTWVyY2hhbnRDdW11bGF0aXZlVm9sdW1lKEFkZHJlc3MpLAogICAgRmVlUHJvcG9zYWwsCiAgICBDdXJyZW50RmVlLAogICAgR2xvYmFsUmF0ZUxpbWl0LAogICAgTWVyY2hhbnRTcGVjaWZpY1JhdGVMaW1pdChBZGRyZXNzKSwKICAgIFBheWVyUmF0ZUxpbWl0KEFkZHJlc3MpLAogICAgLy8vIElzc3VlICMxODQ6IFRvdGFsIGRpc3B1dGVzIGZpbGVkIGFnYWluc3QgYSBtZXJjaGFudCAoa2V5ZWQgYnkgbWVyY2hhbnQgYWRkcmVzcykuCiAgICBNZXJjaGFudERpc3B1dGVDb3VudChBZGRyZXNzKSwKICAgIC8vLyBJc3N1ZSAjMTg0OiBUb3RhbCBjb25maXJtZWQgcGF5bWVudHMgcmVnaXN0ZXJlZCBmb3IgYSBtZXJjaGFudCAoa2V5ZWQgYnkgbWVyY2hhbnQgYWRkcmVzcykuCiAgICBNZXJjaGFudFBheW1lbnRDb3VudChBZGRyZXNzKSwKICAgIC8vLyBJc3N1ZSAjMTg1OiBDb2xsYWJvcmF0aXZlIHNldHRsZW1lbnQgcmVjb3JkIGZvciBhIGRpc3B1dGUuCiAgICBDb2xsYWJvcmF0aXZlU2V0dGxlbWVudChTdHJpbmcpLAogICAgLy8vIElzc3VlICM2NjQ6IEFwcGVuZC1vbmx5IGxvZyBvZiBgVXNhZ2VNZXRyaWNzYCByZWNvcmRzIGZvciBhCiAgICAvLy8gc3Vic2NyaXB0aW9uLCBrZXllZCBieSBzdWJzY3JpcHRpb25faWQuCiAgICBVc2FnZU1ldHJpY3NMb2coU3RyaW5nKSwKICAgIC8vLyBJc3N1ZSAjMzAxOiBMaXN0IG9mIHN1cHBvcnRlZCB0b2tlbiBhZGRyZXNzZXMgZm9yIGVudW1lcmF0aW9uLgogICAgU3VwcG9ydGVkVG9rZW5zLAogICAgLy8vIElzc3VlICMzMDM6IEtZQyB0aWVyIGxpbWl0cyBjb25maWd1cmF0aW9uLgogICAgS3ljVGllckxpbWl0c0NvbmZpZywKICAgIC8vLyBJc3N1ZSAjMzAyOiBMaXN0IG9mIGFjdGl2ZSBzdWJzY3JpcHRpb24gSURzIGZvciBwcm9jZXNzX2R1ZV9zdWJzY3JpcHRpb25zLgogICAgQWN0aXZlU3Vic2NyaXB0aW9ucywKICAgIC8vLyBJc3N1ZSAjMzA0OiBGWCBPcmFjbGUgY29udHJhY3QgYWRkcmVzcyBmb3IgcmF0ZSBzdGFsZW5lc3MgY2hlY2tzLgogICAgRlhPcmFjbGVBZGRyZXNzLAogICAgLy8vIElzc3VlICMzMDI6IENvdW50ZXIgZm9yIHN1YnNjcmlwdGlvbiB0aWNrIHBheW1lbnQgSURzLgogICAgU3Vic2NyaXB0aW9uVGlja0NvdW50ZXIsCiAgICAvLy8gSXNzdWUgIzMxMzogUmVlbnRyYW5jeSBsb2NrIGZvciBwcm9jZXNzX3JlZnVuZF9pbnRlcm5hbCBhbmQgc2V0dGxlX3BheW1lbnQuCiAgICBSZWVudHJhbmN5TG9jaywKICAgIC8vLyBQZXItcmVmdW5kIHJlZW50cmFuY3kgZmxhZyBzZXQgZm9yIHRoZSBkdXJhdGlvbiBvZiBgcHJvY2Vzc19yZWZ1bmRfaW50ZXJuYWxgLgogICAgUmVmdW5kTG9jayhTdHJpbmcpLAogICAgLy8vIEFkbWluLWNvbmZpZ3VyYWJsZSBkaXNwdXRlIHJhdGUgbGltaXRzIChgRGlzcHV0ZVJhdGVMaW1pdENvbmZpZ2ApLgogICAgRGlzcHV0ZVJhdGVMaW1pdHMsCiAgICAvLy8gTnVtYmVyIG9mIG9wZW4vdW5kZXItcmV2aWV3IGRpc3B1dGVzIGZvciBhIGRpc3B1dGVyIGFkZHJlc3MuCiAgICBQYXllck9wZW5EaXNwdXRlQ291bnQoQWRkcmVzcyksCiAgICAvLy8gRml4ZWQtd2luZG93IGdsb2JhbCBkaXNwdXRlIGNyZWF0aW9uIGNvdW50ZXIgKGBEaXNwdXRlQ3JlYXRpb25SYXRlU3RhdGVgKS4KICAgIEdsb2JhbERpc3B1dGVDcmVhdGlvblJhdGUsCiAgICAvLy8gV2hlbiB0cnVlLCBub24tZW1wdHkgZGlzcHV0ZSBldmlkZW5jZSBtdXN0IGJlIGEgdmFsaWQgSVBGUyBDSUQuCiAgICBSZXF1aXJlRXZpZGVuY2VDaWQsCiAgICAvLy8gQ29udHJhY3QgdmVyc2lvbiBzdHJpbmcsIHVwZGF0ZWQgb24gZWFjaCBzdWNjZXNzZnVsIHVwZ3JhZGUuCiAgICBDb250cmFjdFZlcnNpb24sCiAgICAvLy8gQ29uZmlndXJhYmxlIHNldHRsZW1lbnQgZmVlIHJhdGUgaW4gYmFzaXMgcG9pbnRzIChpc3N1ZTogc2V0dGxlX3BheW1lbnQgZmVlKS4KICAgIFNldHRsZW1lbnRGZWVSYXRlLAogICAgLy8vIENvbmZpZ3VyYWJsZSBkaXNwdXRlIGJvbmQgYW1vdW50IGluIHN0YWJsZWNvaW4gc3Ryb29wcyAob3ZlcnJpZGVzIERJU1BVVEVfQk9ORF9BTU9VTlQgY29uc3QpLgogICAgRGlzcHV0ZUJvbmRBbW91bnQsCiAgICAvLy8gQWRtaW4tY29uZmlndXJhYmxlIGFtb3VudCB0aHJlc2hvbGQgZm9yIDMtZGF5IHZlcnN1cyA3LWRheSBkaXNwdXRlIGRlYWRsaW5lcy4KICAgIERpc3B1dGVEZWFkbGluZVRocmVzaG9sZEFtb3VudCwKICAgIC8vLyBDb25maWd1cmFibGUgbW9udGhseSB2b2x1bWUgY2FwIHBlciBLWUMgdGllciBpbiBzdGFibGVjb2luIHN0cm9vcHMgKG92ZXJyaWRlcyBUSUVSX0NBUF8qIGNvbnN0KS4KICAgIFRpZXJWb2x1bWVDYXAoS3ljVGllciksCiAgICAvLy8gQ29uZmlndXJhYmxlIHJlZnVuZCBmZWUgaW4gYmFzaXMgcG9pbnRzIChvdmVycmlkZXMgUkVGVU5EX0ZFRV9CUFMgY29uc3QpLgogICAgUmVmdW5kRmVlQnBzLAogICAgLy8vIElzc3VlICM0NzE6IFdoZXRoZXIgb3ZlcnBhaWQgcGF5bWVudHMgYXV0b21hdGljYWxseSBjcmVhdGUgYSBwZW5kaW5nIHJlZnVuZC4KICAgIEF1dG9SZWZ1bmRPdmVycGF5bWVudCwKICAgIC8vLyBDb25maWd1cmFibGUgcmVmdW5kIGNvb2xkb3duIHBlcmlvZCBpbiBzZWNvbmRzIChvdmVycmlkZXMgUkVGVU5EX0NPT0xET1dOX1NFQ1MgY29uc3QpLgogICAgUmVmdW5kQ29vbGRvd25TZWNzLAogICAgLy8vIEFkbWluLW1hbmFnZWQgcmV1c2FibGUgZmVlLXdhaXZlciBjb2RlIHJlZ2lzdHJ5IGZvciBwZXItcGF5bWVudCBwcm9tb3Rpb25zLgogICAgLy8vIEtleWVkIGJ5IHRoZSBjb2RlIHN0cmluZyBpdHNlbGYuCiAgICBGZWVXYWl2ZXJDb2RlKFN0cmluZyksCiAgICAvLy8gV2hlbiB0cnVlLCBgY2FuY2VsX3N1YnNjcmlwdGlvbmAgbWF5IGNyZWF0ZSBhIHByb3JhdGVkIHBlbmRpbmcgcmVmdW5kLgogICAgQWxsb3dQcm9yYXRlZFJlZnVuZHMsCiAgICAvLy8gUGFnaW5hdGVkIGxvZyBvZiB0cmVhc3VyeSB3aXRoZHJhd2FscyAobmV3ZXN0LWZpcnN0LCBjYXBwZWQgYXQgMTAwKS4KICAgIFRyZWFzdXJ5V2l0aGRyYXdhbEhpc3RvcnksCiAgICAvLy8gVHJlYXN1cnkgbXVsdGlzaWcgY29uZmlndXJhdGlvbiBmb3Igd2l0aGRyYXdhbCBnb3Zlcm5hbmNlIChNLW9mLU4gKyB0aW1lbG9jaykuCiAgICBUcmVhc3VyeU11bHRpc2lnQ29uZmlnLAogICAgLy8vIENvdW50ZXIgZm9yIHRyZWFzdXJ5IHdpdGhkcmF3YWwgcHJvcG9zYWwgSURzLgogICAgVHJlYXN1cnlQcm9wb3NhbENvdW50ZXIsCiAgICAvLy8gVHJlYXN1cnkgd2l0aGRyYXdhbCBwcm9wb3NhbHMga2V5ZWQgYnkgcHJvcG9zYWwgSUQuCiAgICBUcmVhc3VyeVdpdGhkcmF3YWxQcm9wb3NhbChTdHJpbmcpLAogICAgLy8vIFBlci10b2tlbiB0cmVhc3VyeSBiYWxhbmNlIGZvciBtdWx0aS10b2tlbiBzdXBwb3J0LgogICAgVG9rZW5UcmVhc3VyeUJhbGFuY2UoQWRkcmVzcyksCiAgICAvLy8gSXNzdWUgIzQ4NTogTWFya3MgYSBwYXltZW50IGFzIGNyZWF0ZWQgZnJvbSBhIGRpcmVjdF90cmFuc2ZlciBwYXltZW50IGxpbmsuCiAgICAvLy8gUHJldmVudHMgZnV0dXJlIGRpc3B1dGVzIGZyb20gYmVpbmcgY3JlYXRlZCBmb3IgdGhpcyBwYXltZW50LgogICAgRGlyZWN0VHJhbnNmZXJQYXltZW50KFN0cmluZyksCiAgICAvLy8gSXNzdWUgIzQ4MzogTWFwcyB0b2tlbiBhZGRyZXNzIHRvIGl0cyBjdXJyZW5jeSBzeW1ib2wgKGUuZy4sIFVTREMsIEVVUkMsIEJSTFQpLgogICAgVG9rZW5DdXJyZW5jeShBZGRyZXNzKSwKICAgIEludm9pY2UoU3RyaW5nKSwKICAgIE1lcmNoYW50SW52b2ljZXMoQWRkcmVzcyksCiAgICBJbnZvaWNlQ291bnRlciwKICAgIC8vLyBJc3N1ZSAjNDgyOiBQYXltZW50IHJldHJ5IGNoYWluIHRyYWNraW5nIC0gbWFwcyBvcmlnaW5hbF9pZCB0byBsaXN0IG9mIHJldHJ5IHBheW1lbnQgSURzCiAgICBQYXltZW50UmV0cmllcyhTdHJpbmcpLAogICAgLy8vIElzc3VlICM0Nzg6IEZYIG9yYWNsZSBtYXggcmF0ZSBkZXZpYXRpb24gcGVyIGN1cnJlbmN5IHBhaXIgaW4gYmFzaXMgcG9pbnRzCiAgICBNYXhSYXRlRGV2aWF0aW9uKFN5bWJvbCksCiAgICAvLy8gSXNzdWUgIzQ4MTogQWRtaW4tY29uZmlndXJhYmxlIGRpc3B1dGUgdGhyZXNob2xkIGZvciBhdXRvLXN1c3BlbnNpb24KICAgIERpc3B1dGVUaHJlc2hvbGQsCiAgICAvLy8gTWluaW11bSBwYXltZW50IGR1cmF0aW9uIGluIHNlY29uZHMgKGRlZmF1bHQ6IENSRUFURV9QQVlNRU5UX1dJTkRPV19TRUNTID0gNjApLgogICAgTWluUGF5bWVudER1cmF0aW9uU2VjcywKICAgIC8vLyBNYXhpbXVtIHBheW1lbnQgZHVyYXRpb24gaW4gc2Vjb25kcyAoZGVmYXVsdDogMzAgZGF5cykuCiAgICBNYXhQYXltZW50RHVyYXRpb25TZWNzLAogICAgLy8vIElzc3VlICM0ODk6IFJldmVyc2UgaW5kZXggZnJvbSBtZXRhZGF0YV9oYXNoIHRvIHBheW1lbnRfaWQgZm9yIG9yZGVyIHJlY29uY2lsaWF0aW9uLgogICAgTWV0YWRhdGFIYXNoUGF5bWVudChCeXRlc04zMj4pLAogICAgLy8vIElzc3VlICM0OTI6IEN1c3RvbWVyIHByb2ZpbGUga2V5ZWQgYnkgKG1lcmNoYW50X2lkLCBjdXN0b21lcl9pZCkgZm9yIENSTSBmZWF0dXJlcy4KICAgIEN1c3RvbWVyUHJvZmlsZShBZGRyZXNzLCBBZGRyZXNzKSwKICAgIC8vLyBJc3N1ZSAjNDM3OiBBbGxvd2xpc3RlZCBERVggcm91dGVyIGFkZHJlc3MKICAgIEFsbG93ZWRSb3V0ZXIoQWRkcmVzcyksCiAgICAvLy8gSXNzdWUgIzQzNzogTGlzdCBvZiBhbGxvd2xpc3RlZCBERVggcm91dGVyIGFkZHJlc3NlcwogICAgQWxsb3dlZFJvdXRlcnNMaXN0LAogICAgLy8vIElzc3VlICM0MzQ6IFdyYXBwZWQgWExNIChXWExNKSB0b2tlbiBjb250cmFjdCBhZGRyZXNzCiAgICBXcmFwcGVkWGxtQ29udHJhY3QsCiAgICAvLy8gSXNzdWUgIzUwNDogUGF5bWVudCBJRHMgZ3JvdXBlZCBieSBhcHByb3hpbWF0ZSBleHBpcnkgbGVkZ2VyIGJ1Y2tldC4KICAgIFBheW1lbnRzQnlFeHBpcnkodTMyKSwKICAgIC8vLyBJc3N1ZSAjNTA0OiBTb3J0ZWQgc2V0IG9mIGV4cGlyeSBidWNrZXRzIHRoYXQgY3VycmVudGx5IGNvbnRhaW4gcGF5bWVudCBJRHMuCiAgICBQYXltZW50RXhwaXJ5QnVja2V0cywKICAgIC8vLyBJc3N1ZSAjNjc4OiBEYWlseS1idWNrZXRlZCBwYXltZW50IElEIGluZGV4IGZvciBPKGRheXMpIGFuYWx5dGljcyBxdWVyaWVzLgogICAgLy8vIEtleTogKG1lcmNoYW50X2lkLCBkYXlfYnVja2V0ID0gY3JlYXRlZF9hdCAvIDg2XzQwMCkg4oaSIFZlYzxwYXltZW50X2lkPi4KICAgIERhaWx5UGF5bWVudEluZGV4KEFkZHJlc3MsIHU2NCksCiAgICAvLy8gSXNzdWUgIzY2NjogUGFnaW5hdGVkIGxvZyBvZiBwbGF0Zm9ybS1mZWUgY29sbGVjdGlvbiBldmVudHMgKG5ld2VzdC1maXJzdCwKICAgIC8vLyBjYXBwZWQgYXQgYEZFRV9DT0xMRUNUSU9OX0hJU1RPUllfQ0FQYCksIGNvbnN1bWVkIGJ5IGBnZXRfcGxhdGZvcm1fZmVlX3JlcG9ydGAuCiAgICBGZWVDb2xsZWN0aW9uSGlzdG9yeSwKICAgIC8vLyBJc3N1ZSAjNjY3OiBBcmJpdHJhcnkgb24tY2hhaW4gY29udHJhY3QgbWV0YWRhdGEgKGRlc2NyaXB0aW9uLCBkZXBsb3ltZW50IG5vdGVzLAogICAgLy8vIGF1ZGl0IGNvbW1pdAogICAgLy8vIElzc3VlICM4MDA6IENhY2hlZCB0b2tlbiBiYWxhbmNlIGZvciB0aGUgZ2FzIGVzdGltYXRvciwgc2NvcGVkIHRvIHRoZQogICAgLy8vIGN1cnJlbnQgdHJhbnNhY3Rpb24gaW52b2NhdGlvbiB2aWEgaW5zdGFuY2Ugc3RvcmFnZS4gU29yb2JhbiBpbnN0YW5jZQogICAgLy8vIHN0b3JhZ2UgZG9lcyBub3QgcGVyc2lzdCBhY3Jvc3MgdHJhbnNhY3Rpb25zLCBzbyB0aGlzIGNhY2hlIGlzIHNhZmUgYW5kCiAgICAvLy8gbGV0cyBgR2FzRXN0aW1hdG9yOjplc3RpbWF0ZV9wYXltZW50X2ZlZWAgYXZvaWQgcmVwZWF0ZWQgY3Jvc3MtY29udHJhY3QKICAgIC8vLyBgYmFsYW5jZWAgY2FsbHMgd2l0aGluIGEgc2luZ2xlIGJhdGNoIChlLmcuIDUgZXN0aW1hdGVzIOKGkiAxIHJlYWQpLgogICAgLy8vIEFkZHJlc3Mgb2YgY29uZmlndXJlZCBQYXltZW50TGlua01hbmFnZXIgY29udHJhY3QgZm9yIGludm9pY2UgY3Jvc3MtY2FsbHMuCiAgICBQYXltZW50TGlua01hbmFnZXJBZGRyZXNzLAogICAgLy8vIEdsb2JhbCBhcHBlbmQtb25seSBpbmRleCBvZiBhbGwgcmVmdW5kIElEcyBmb3IgcGFnaW5hdGVkIGVudW1lcmF0aW9uLgogICAgUmVmdW5kSW5kZXgsCn0K
+//! Data keys for persistent storage in FluxaPay.
+
+use crate::merchant_registry::KycTier;
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String, Symbol};
+
+/// Converts a payment ID String into a 32-byte hash key for storage.
+/// Reduces storage rent and improves lookups.
+pub fn payment_id_to_key(env: &Env, payment_id: &String) -> BytesN<32> {
+    env.crypto().sha256(&payment_id.to_bytes()).to_bytes()
+}
+
+/// Converts a payment ID string slice into a 32-byte hash key for storage.
+pub fn payment_id_str_to_key(env: &Env, payment_id: &str) -> BytesN<32> {
+    env.crypto()
+        .sha256(&Bytes::from_slice(env, payment_id.as_bytes()))
+        .to_bytes()
+}
+
+#[contracttype]
+pub enum DataKey {
+    Payment(BytesN<32>),
+    PaymentStatusHistory(String),
+    MerchantPayments(Address),
+    MerchantRateLimit(Address),
+    Refund(String),
+    PaymentRefunds(String),
+    RefundCounter,
+    Dispute(String),
+    PaymentDisputes(String),
+    DisputeCounter,
+    Stream(String),
+    TreasuryBalance,
+    UsdcToken,
+    Paused,
+    CreationPaused,
+    MerchantRegistryAddress,
+    AllowedToken(Address),
+    Blacklisted(Address),
+    MerchantAmountLimits(Address),
+    GlobalAmountLimits,
+    IdempotencyKey(String),
+    SubscriptionPlan(String),
+    Subscription(String),
+    PayerSubscriptions(Address),
+    SubscriptionCounter,
+    StreamCounter,
+    /// Stores operator notes keyed by dispute_id for on-chain transparency.
+    DisputeOperatorNote(String),
+    /// Stores all arbitrators who have voted on a dispute.
+    DisputeArbitratorVotes(String),
+    /// Locked stake for a dispute arbitrator: (dispute_id, arbitrator) → amount
+    DisputeStake(String, Address),
+    /// Vote cast by an arbitrator: (dispute_id, arbitrator) → StakeWeightedVote
+    DisputeVote(String, Address),
+    /// Tally of votes for a dispute
+    DisputeVoteTally(String),
+    /// Issue #843: Admin-configurable weighted quorum in basis points.
+    WeightedQuorumBps,
+    /// Issue #846: Pending time-locked WASM upgrade proposal.
+    PendingWasmUpgrade,
+    /// Cross-contract address of the configured FX oracle (Issue #304).
+    FxOracleAddress,
+    /// Whether `process_refund` requires a `receipt_hash` on refunds (Issue #176).
+    RequireReceiptHash,
+    /// Cross-contract address of the configured DEX router (Issue #173).
+    DexRouterAddress,
+    /// Configurable refund expiry window in seconds (Issue #170).
+    RefundExpirySecs,
+    /// Vote cast by an arbitrator under the simple ARBITRATOR-role voting
+    /// flow: (dispute_id, arbitrator) → ArbitratorVoteChoice.
+    ArbitratorVote(String, Address),
+    /// Tally of ARBITRATOR-role votes for a dispute.
+    ArbitratorVoteTally(String),
+    /// Issue #168: Fee split configuration (treasury_bps, developer_bps, treasury_addr, developer_addr)
+    FeeSplitConfig,
+    /// Monthly volume tracker: (merchant_id, month_epoch) → i128 cumulative amount
+    MerchantMonthlyVolume(Address, u32),
+    /// Cumulative all-time payment volume per merchant for KYC tier auto-upgrades (issue #207).
+    MerchantCumulativeVolume(Address),
+    FeeProposal,
+    CurrentFee,
+    GlobalRateLimit,
+    MerchantSpecificRateLimit(Address),
+    PayerRateLimit(Address),
+    /// Issue #184: Total disputes filed against a merchant (keyed by merchant address).
+    MerchantDisputeCount(Address),
+    /// Issue #184: Total confirmed payments registered for a merchant (keyed by merchant address).
+    MerchantPaymentCount(Address),
+    /// Issue #185: Collaborative settlement record for a dispute.
+    CollaborativeSettlement(String),
+    /// Issue #664: Append-only log of `UsageMetrics` records for a
+    /// subscription, keyed by subscription_id.
+    UsageMetricsLog(String),
+    /// Issue #301: List of supported token addresses for enumeration.
+    SupportedTokens,
+    /// Issue #303: KYC tier limits configuration.
+    KycTierLimitsConfig,
+    /// Issue #302: List of active subscription IDs for process_due_subscriptions.
+    ActiveSubscriptions,
+    /// Issue #304: FX Oracle contract address for rate staleness checks.
+    FXOracleAddress,
+    /// Issue #302: Counter for subscription tick payment IDs.
+    SubscriptionTickCounter,
+    /// Issue #313: Reentrancy lock for process_refund_internal and settle_payment.
+    ReentrancyLock,
+    /// Per-refund reentrancy flag set for the duration of `process_refund_internal`.
+    RefundLock(String),
+    /// Admin-configurable dispute rate limits (`DisputeRateLimitConfig`).
+    DisputeRateLimits,
+    /// Number of open/under-review disputes for a disputer address.
+    PayerOpenDisputeCount(Address),
+    /// Fixed-window global dispute creation counter (`DisputeCreationRateState`).
+    GlobalDisputeCreationRate,
+    /// When true, non-empty dispute evidence must be a valid IPFS CID.
+    RequireEvidenceCid,
+    /// Contract version string, updated on each successful upgrade.
+    ContractVersion,
+    /// Configurable settlement fee rate in basis points (issue: settle_payment fee).
+    SettlementFeeRate,
+    /// Configurable dispute bond amount in stablecoin stroops (overrides DISPUTE_BOND_AMOUNT const).
+    DisputeBondAmount,
+    /// Admin-configurable amount threshold for 3-day versus 7-day dispute deadlines.
+    DisputeDeadlineThresholdAmount,
+    /// Configurable monthly volume cap per KYC tier in stablecoin stroops (overrides TIER_CAP_* const).
+    TierVolumeCap(KycTier),
+    /// Configurable refund fee in basis points (overrides REFUND_FEE_BPS const).
+    RefundFeeBps,
+    /// Issue #471: Whether overpaid payments automatically create a pending refund.
+    AutoRefundOverpayment,
+    /// Configurable refund cooldown period in seconds (overrides REFUND_COOLDOWN_SECS const).
+    RefundCooldownSecs,
+    /// Admin-managed reusable fee-waiver code registry for per-payment promotions.
+    /// Keyed by the code string itself.
+    FeeWaiverCode(String),
+    /// When true, `cancel_subscription` may create a prorated pending refund.
+    AllowProratedRefunds,
+    /// Paginated log of treasury withdrawals (newest-first, capped at 100).
+    TreasuryWithdrawalHistory,
+    /// Treasury multisig configuration for withdrawal governance (M-of-N + timelock).
+    TreasuryMultisigConfig,
+    /// Counter for treasury withdrawal proposal IDs.
+    TreasuryProposalCounter,
+    /// Treasury withdrawal proposals keyed by proposal ID.
+    TreasuryWithdrawalProposal(String),
+    /// Per-token treasury balance for multi-token support.
+    TokenTreasuryBalance(Address),
+    /// Issue #485: Marks a payment as created from a direct_transfer payment link.
+    /// Prevents future disputes from being created for this payment.
+    DirectTransferPayment(String),
+    /// Issue #483: Maps token address to its currency symbol (e.g., USDC, EURC, BRLT).
+    TokenCurrency(Address),
+    Invoice(String),
+    MerchantInvoices(Address),
+    InvoiceCounter,
+    /// Issue #482: Payment retry chain tracking - maps original_id to list of retry payment IDs
+    PaymentRetries(String),
+    /// Issue #478: FX oracle max rate deviation per currency pair in basis points
+    MaxRateDeviation(Symbol),
+    /// Issue #481: Admin-configurable dispute threshold for auto-suspension
+    DisputeThreshold,
+    /// Minimum payment duration in seconds (default: CREATE_PAYMENT_WINDOW_SECS = 60).
+    MinPaymentDurationSecs,
+    /// Maximum payment duration in seconds (default: 30 days).
+    MaxPaymentDurationSecs,
+    /// Issue #489: Reverse index from metadata_hash to payment_id for order reconciliation.
+    MetadataHashPayment(BytesN<32>),
+    /// Issue #492: Customer profile keyed by (merchant_id, customer_id) for CRM features.
+    CustomerProfile(Address, Address),
+    /// Issue #437: Allowlisted DEX router address
+    AllowedRouter(Address),
+    /// Issue #437: List of allowlisted DEX router addresses
+    AllowedRoutersList,
+    /// Issue #434: Wrapped XLM (WXLM) token contract address
+    WrappedXlmContract,
+    /// Issue #504: Payment IDs grouped by approximate expiry ledger bucket.
+    PaymentsByExpiry(u32),
+    /// Issue #504: Sorted set of expiry buckets that currently contain payment IDs.
+    PaymentExpiryBuckets,
+    /// Issue #678: Daily-bucketed payment ID index for O(days) analytics queries.
+    /// Key: (merchant_id, day_bucket = created_at / 86_400) → Vec<payment_id>.
+    DailyPaymentIndex(Address, u64),
+    /// Issue #666: Paginated log of platform-fee collection events (newest-first,
+    /// capped at `FEE_COLLECTION_HISTORY_CAP`), consumed by `get_platform_fee_report`.
+    FeeCollectionHistory,
+    /// Address of the configured PaymentLinkManager contract for invoice cross-calls.
+    PaymentLinkManagerAddress,
+    /// Configurable invoice overdue grace period in seconds (Issue #607).
+    InvoiceGracePeriodSecs,
+    /// Issue #667: Arbitrary on-chain contract metadata keyed by an admin-chosen symbol.
+    ContractMetadata(Symbol),
+    /// Issue #628: Cumulative gross payment volume per merchant.
+    MerchantGrossVolume(Address),
+    /// Issue #628: Merchants that have had at least one payment created.
+    TrackedMerchants,
+    /// Issue #638: Refund idempotency key to `RefundIdempotencyRecord`.
+    RefundIdempotencyKey(String),
+    /// Issue #633: Subscription IDs for a plan. Appended to preserve earlier discriminants.
+    PlanSubscribers(String),
+    /// Issue #624: Timelock delay in seconds for critical admin operations.
+    TimelockDelaySecs,
+    /// Issue #624: Pending timelocked action keyed by action ID.
+    PendingTimelockAction(String),
+    /// Issue #624: Counter for pending action IDs.
+    TimelockActionCounter,
+    /// Issue #761: Payment idempotency key to payment id.
+    PaymentIdempotencyKey(String),
+    /// Queued auto-refund created when a partially funded payment expires.
+    /// Appended so earlier discriminants stay stable.
+    AutoRefundQueue,
+    /// Global append-only index of all refund IDs for paginated enumeration.
+    RefundIndex,
+}
